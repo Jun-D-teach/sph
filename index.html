@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPH - MAN 2 PALEMBANG</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif}
+body{background:#eef2f7;color:#222}
+header{background:#1a3e72;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+header h1{font-size:18px}header small{opacity:.85}
+nav{background:#16325c;display:flex;flex-wrap:wrap}
+nav button{background:none;border:none;color:#fff;padding:12px 16px;cursor:pointer;font-size:13px}
+nav button:hover,nav button.active{background:#0d2547;font-weight:bold}
+main{padding:20px;max-width:1200px;margin:auto}
+.page{display:none}.page.show{display:block}
+.card{background:#fff;border-radius:10px;padding:20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+h2{margin-bottom:12px;color:#1a3e72;font-size:17px}h3{margin:10px 0 6px;font-size:14px}
+label{display:block;font-size:12px;margin-top:8px;font-weight:600}
+input,select,textarea{width:100%;padding:7px;border:1px solid #bbb;border-radius:5px;font-size:13px;margin-top:2px}
+textarea{font-family:Consolas,monospace;font-size:12px}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>div{flex:1;min-width:160px}
+button.btn{margin-top:12px;padding:9px 16px;border:none;border-radius:6px;background:#1a3e72;color:#fff;cursor:pointer;font-size:13px;font-weight:600}
+button.btn:hover{background:#0d2547}
+button.btn.red{background:#b03030}button.btn.green{background:#2e7d32}button.btn.gray{background:#666}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px;background:#fff}
+th,td{border:1px solid #999;padding:5px 7px;text-align:left;vertical-align:top}
+th{background:#a9c46c;color:#111}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.gbtn{padding:16px 8px;border:3px solid #fff;border-radius:8px;color:#fff;font-weight:bold;text-align:center;cursor:pointer;font-size:12px;box-shadow:0 2px 5px rgba(0,0,0,.3);text-transform:uppercase}
+.gbtn:disabled{opacity:.4;cursor:not-allowed}
+.c1{background:#8fb56a}.c2{background:#f0ee9a;color:#333}.c3{background:#b8860b}.c4{background:#3e7d3a}.c5{background:#f48fb1}.c6{background:#9575cd}.c7{background:#2e4f8f}.c8{background:#03a9f4}.c9{background:#bf5b16}
+.stat{display:flex;gap:12px;flex-wrap:wrap}.stat div{background:#1a3e72;color:#fff;border-radius:8px;padding:10px 18px;font-size:13px}
+.note{background:#fff8c9;border:1px solid #e0c860;padding:8px;border-radius:6px;font-size:12px;margin-top:8px}
+.err{background:#fddede;border:1px solid #d33;padding:8px;border-radius:6px;font-size:12px;margin-top:8px}
+.ok{background:#e2f2e2;border:1px solid #2e7d32;padding:8px;border-radius:6px;font-size:12px;margin-top:8px}
+.kotak-kunci input{text-align:center;width:34px;padding:4px}
+@media print{.no-print{display:none!important}main{padding:0}.card{box-shadow:none;border:none}body{background:#fff}}
+.rhead{text-align:center;margin-bottom:10px}
+.rhead div{font-weight:bold}.rhead .pink{color:#e91e63}
+.sig{display:flex;justify-content:space-around;margin-top:40px;font-size:12px;text-align:center}
+.sig div{min-width:200px}
+td.c,th.c{text-align:center}
+</style>
+</head>
+<body>
+<header class="no-print">
+  <h1>📘 APLIKASI SPH — SISTEM PENILAIAN HARIAN<br><small>MAN 2 PALEMBANG • TAHUN PELAJARAN <span id="hdrTA"></span></small></h1>
+  <div>
+    <button class="btn green" onclick="backupJSON()">⬇ Backup</button>
+    <button class="btn gray" onclick="document.getElementById('restoreFile').click()">⬆ Restore</button>
+    <input type="file" id="restoreFile" hidden accept=".json" onchange="restoreJSON(this)">
+  </div>
+</header>
+<nav class="no-print">
+  <button data-pg="home" class="active"> BERANDA</button>
+  <button data-pg="master">🗂 MASTER DATA</button>
+  <button data-pg="setup">📝 LEMBAR KOREKSI / SETUP UJIAN</button>
+  <button data-pg="import">📥 IMPORT NILAI (CBT / GOOGLE FORM)</button>
+  <button data-pg="manual">✍ INPUT MANUAL (NON CBT)</button>
+  <button data-pg="gen">📊 GENERATE DATA (16 LAPORAN)</button>
+</nav>
+<main>
+
+<!-- ============ BERANDA ============ -->
+<section id="pg-home" class="page show">
+  <div class="card"><h2>Selamat Datang di Aplikasi SPH MAN 2 Palembang</h2>
+    <p style="font-size:13px">Alur kerja: <b>Master Data → Setup Ujian & Kunci Jawaban → Import Google Form (CBT) / Input Manual (NON CBT) → Koreksi Otomatis → Generate 16 Laporan → Cetak / Export RDM.</b></p>
+    <div class="stat" style="margin-top:12px">
+      <div>👥 Siswa: <b id="stSiswa">0</b></div>
+      <div>📝 Ujian: <b id="stUjian">0</b></div>
+      <div>📅 TA: <b id="stTA">-</b></div>
+    </div>
+  </div>
+  <div class="card"><h2>Pengaturan Madrasah</h2>
+    <div class="row">
+      <div><label>Nama Madrasah</label><input id="setSekolah"></div>
+      <div><label>Tahun Pelajaran</label><input id="setTA"></div>
+      <div><label>Semester</label><select id="setSmt"><option>Ganjil</option><option>Genap</option></select></div>
+      <div><label>KKM Default</label><input type="number" id="setKKM"></div>
+    </div>
+    <div class="row">
+      <div><label>Kepala Madrasah</label><input id="setKepala"></div>
+      <div><label>NIP Kepala</label><input id="setNipKepala"></div>
+    </div>
+    <button class="btn" onclick="saveSettings()">💾 Simpan Pengaturan</button>
+  </div>
+</section>
+
+<!-- ============ MASTER DATA ============ -->
+<section id="pg-master" class="page">
+  <div class="card"><h2>Import Data Siswa (paste dari Excel/Sheets: NISN [TAB] NAMA [TAB] KELAS)</h2>
+    <textarea id="pasteSiswa" rows="5" placeholder="0089526958&#9;zahara pebriyanti&#9;XII.3"></textarea>
+    <button class="btn green" onclick="importSiswa()">📥 Import Siswa</button>
+    <span id="msgSiswa"></span>
+  </div>
+  <div class="card"><h2>Tambah Siswa Manual</h2>
+    <div class="row">
+      <div><label>NISN</label><input id="addNisn"></div>
+      <div><label>Nama</label><input id="addNama"></div>
+      <div><label>Kelas</label><input id="addKelas" placeholder="XII.3"></div>
+      <div style="flex:0"><label>&nbsp;</label><button class="btn" onclick="addSiswa()">+ Tambah</button></div>
+    </div>
+    <label>Cari</label><input id="cariSiswa" oninput="renderSiswa()" placeholder="ketik nama / nisn / kelas...">
+    <div id="tblSiswa"></div>
+    <button class="btn red" onclick="if(confirm('Hapus SEMUA data siswa?')){DB.students=[];save();renderSiswa();}">🗑 Hapus Semua</button>
+  </div>
+</section>
+
+<!-- ============ SETUP UJIAN ============ -->
+<section id="pg-setup" class="page">
+  <div class="card"><h2>LEMBAR KOREKSI HASIL PENILAIAN HARIAN BERSAMA</h2>
+    <div class="row">
+      <div><label>Mata Pelajaran</label><input id="exMapel"></div>
+      <div><label>Kelas / Rombel</label><input id="exKelas" placeholder="XII.3"></div>
+      <div><label>Semester</label><select id="exSmt"><option>Ganjil</option><option>Genap</option></select></div>
+      <div><label>Hari/Tanggal</label><input type="date" id="exTanggal"></div>
+    </div>
+    <div class="row">
+      <div><label>Jumlah Soal (butir)</label><input type="number" id="exJumlah" value="10"></div>
+      <div><label>Bentuk Soal</label><select id="exBentuk"><option value="PG" selected>Pilihan Ganda</option><option>Benar-Salah</option><option>Menjodohkan</option><option>Isian Singkat</option><option>Uraian</option></select></div>
+      <div><label>KKM (WAJIB)</label><input type="number" id="exKKM"></div>
+      <div><label>Skor per Soal (kosong = 100÷jumlah soal)</label><input type="number" id="exSkor"></div>
+    </div>
+    <div class="row">
+      <div><label>Nama Guru Mapel</label><input id="exGuru"></div>
+      <div><label>NIP Guru</label><input id="exNipGuru"></div>
+      <div><label>Nama Wali Kelas</label><input id="exWali"></div>
+      <div><label>NIP Wali Kelas</label><input id="exNipWali"></div>
+    </div>
+    <button class="btn" onclick="buatKunci()">🔑 Buat Kolom Kunci Jawaban</button>
+    <div id="kotakKunci" class="kotak-kunci" style="margin-top:10px;overflow-x:auto"></div>
+    <button class="btn green" onclick="saveExam()">💾 SIMPAN SETUP UJIAN</button>
+    <span id="msgExam"></span>
+  </div>
+  <div class="card"><h2>Daftar Ujian Tersimpan</h2><div id="tblExam"></div></div>
+</section>
+
+<!-- ============ IMPORT CBT ============ -->
+<section id="pg-import" class="page">
+  <div class="card"><h2>IMPORT HASIL GOOGLE FORM (Moda CBT)</h2>
+    <div class="note">PASTEKAN HASIL COPY DARI SPREADSHEET (mulai baris header: time Stamp | NAMA | NISN | KELAS | jawaban...). Jika NISN salah / tidak ada di database maka data tidak dapat dibaca. Jawaban siswa hanya berisi huruf a–e.</div>
+    <label>Pilih Ujian</label><select id="impExam"></select>
+    <label>Paste Data di Sini</label>
+    <textarea id="pasteNilai" rows="10"></textarea>
+    <label style="font-weight:normal"><input type="checkbox" id="chkAutoAdd" style="width:auto"> NISN tak dikenal otomatis ditambahkan ke Master Data (kelas diambil dari file)</label>
+    <button class="btn green" onclick="prosesImport()">⚙ IMPORT & KOREKSI OTOMATIS</button>
+    <button class="btn red" onclick="document.getElementById('pasteNilai').value='';document.getElementById('hasilImport').innerHTML=''">🧹 BERSIH DATA</button>
+    <div id="hasilImport"></div>
+  </div>
+</section>
+
+<!-- ============ INPUT MANUAL NON CBT ============ -->
+<section id="pg-manual" class="page">
+  <div class="card"><h2>INPUT MANUAL (Moda NON CBT — tes tertulis)</h2>
+    <label>Pilih Ujian</label><select id="manExam" onchange="renderManual()"></select>
+    <label>Mode Input</label>
+    <select id="manMode" onchange="renderManual()"><option value="huruf">Huruf Jawaban per Soal (dikoreksi otomatis)</option><option value="nilai">Nilai Langsung</option></select>
+    <div id="areaManual"></div>
+    <button class="btn green" onclick="saveManual()">💾 SIMPAN & KOREKSI</button>
+  </div>
+</section>
+
+<!-- ============ GENERATE ============ -->
+<section id="pg-gen" class="page">
+  <div class="card no-print"><h2>GENERATE DATA</h2>
+    <label>Pilih Ujian</label><select id="genExam" onchange="renderGenButtons()"></select>
+    <div class="grid" id="gridGen" style="margin-top:14px"></div>
+  </div>
+  <div class="card no-print" id="areaKeterampilan" style="display:none"></div>
+  <div class="card" id="reportWrap" style="display:none">
+    <div class="no-print" style="margin-bottom:10px">
+      <button class="btn" onclick="window.print()">🖨 CETAK / SIMPAN PDF</button>
+      <button class="btn green" onclick="exportCSV()">⬇ EXPORT CSV</button>
+      <button class="btn gray" onclick="document.getElementById('reportWrap').style.display='none'">✖ Tutup</button>
+    </div>
+    <div id="reportBody"></div>
+  </div>
+</section>
+</main>
+
+<script>
+/* ================= PENYIMPANAN ================= */
+let DB={settings:{sekolah:'MAN 2 PALEMBANG',ta:'2025/2026',smt:'Ganjil',kkm:85,kepala:'',nipKepala:''},students:[],exams:[]};
+try{const s=localStorage.getItem('sph_man2plg_v1');if(s)DB=JSON.parse(s);}catch(e){}
+function save(){localStorage.setItem('sph_man2plg_v1',JSON.stringify(DB));refreshStats();}
+const $=id=>document.getElementById(id);
+
+/* ================= NAVIGASI ================= */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('show'));
+  $('pg-'+b.dataset.pg).classList.add('show');
+  if(b.dataset.pg==='master')renderSiswa();
+  if(b.dataset.pg==='setup'){$('exKKM').value=$('exKKM').value||DB.settings.kkm;renderExams();}
+  if(b.dataset.pg==='import')fillExamSelect('impExam');
+  if(b.dataset.pg==='manual')fillExamSelect('manExam'),renderManual();
+  if(b.dataset.pg==='gen')fillExamSelect('genExam'),renderGenButtons();
+});
+
+/* ================= UTIL ================= */
+function normKelas(k){if(!k)return'';let s=String(k).toUpperCase().replace(/\s+/g,'').replace(/\./g,'');s=s.replace(/XLL/,'XII').replace(/^12/,'XII').replace(/^11/,'XI').replace(/^10/,'X');const m=s.match(/^([XIV]+)(\d+[A-Z]?)$/);return m?m[1]+'.'+m[2]:s;}
+function predikat(n){return n>=90?'A':n>=80?'B':n>=70?'C':'D';}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function refreshStats(){$('stSiswa').textContent=DB.students.length;$('stUjian').textContent=DB.exams.length;$('stTA').textContent=DB.settings.ta;$('hdrTA').textContent=DB.settings.ta;}
+function fillExamSelect(id){const el=$(id);const v=el.value;el.innerHTML=DB.exams.map((e,i)=>`<option value="${i}">${esc(e.mapel)} — ${esc(e.kelas)} (${e.mode||'belum ada data'})</option>`).join('')||'<option value="">-- belum ada ujian --</option>';if(v!=='')el.value=v;}
+function getExam(id){return DB.exams[parseInt(id)];}
+
+/* ================= PENGATURAN ================= */
+function loadSettings(){const s=DB.settings;$('setSekolah').value=s.sekolah;$('setTA').value=s.ta;$('setSmt').value=s.smt;$('setKKM').value=s.kkm;$('setKepala').value=s.kepala||'';$('setNipKepala').value=s.nipKepala||'';}
+function saveSettings(){DB.settings={sekolah:$('setSekolah').value,ta:$('setTA').value,smt:$('setSmt').value,kkm:+$('setKKM').value||75,kepala:$('setKepala').value,nipKepala:$('setNipKepala').value};save();alert('Pengaturan tersimpan.');}
+
+/* ================= MASTER SISWA ================= */
+function addSiswa(){const n=$('addNisn').value.trim(),m=$('addNama').value.trim(),k=normKelas($('addKelas').value);if(!n||!m)return alert('NISN & Nama wajib!');if(DB.students.find(s=>s.nisn===n))return alert('NISN sudah ada!');DB.students.push({nisn:n,nama:m,kelas:k});DB.students.sort((a,b)=>(a.kelas+a.nama).localeCompare(b.kelas+b.nama));save();renderSiswa();$('addNisn').value=$('addNama').value='';}
+function importSiswa(){const lines=$('pasteSiswa').value.split(/\r?\n/).filter(l=>l.trim());let c=0;lines.forEach(l=>{const r=l.split('\t');const nisn=(r[0]||'').trim(),nama=(r[1]||'').trim(),kelas=normKelas(r[2]);if(!nisn||!nama||nisn==='.')return;if(!DB.students.find(s=>s.nisn===nisn)){DB.students.push({nisn,nama,kelas});c++;}});DB.students.sort((a,b)=>(a.kelas+a.nama).localeCompare(b.kelas+b.nama));save();renderSiswa();$('msgSiswa').innerHTML=`<span class="ok">${c} siswa baru terimport.</span>`;$('pasteSiswa').value='';}
+function renderSiswa(){const q=($('cariSiswa').value||'').toLowerCase();const list=DB.students.filter(s=>(s.nisn+s.nama+s.kelas).toLowerCase().includes(q));$('tblSiswa').innerHTML=`<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Kelas</th><th class="no-print">Aksi</th></tr>`+list.map((s,i)=>`<tr><td class="c">${i+1}</td><td>${s.nisn}</td><td>${esc(s.nama)}</td><td class="c">${s.kelas}</td><td class="no-print"><button class="btn red" style="margin:0;padding:3px 8px" onclick="delSiswa('${s.nisn}')">✖</button></td></tr>`).join('')+`</table><p style="font-size:12px;margin-top:6px">Total: ${list.length} siswa</p>`;}
+function delSiswa(n){if(confirm('Hapus siswa '+n+'?')){DB.students=DB.students.filter(s=>s.nisn!==n);save();renderSiswa();}}
+
+/* ================= SETUP UJIAN ================= */
+function buatKunci(){const n=+$('exJumlah').value||10;let h='<table><tr><th colspan="'+n+'">KUNCI JAWABAN (nomor soal 1 s.d. '+n+')</th></tr><tr>';for(let i=1;i<=n;i++)h+=`<th class="c">${i}</th>`;h+='</tr><tr>';for(let i=1;i<=n;i++)h+=`<td class="c"><input id="k${i}" maxlength="1" style="width:34px;text-align:center"></td>`;h+='</tr></table>';$('kotakKunci').innerHTML=h;}
+function saveExam(){const n=+$('exJumlah').value;if(!$('exMapel').value||!$('exKelas').value||!n)return alert('Mapel, Kelas, Jumlah Soal wajib!');const kunci=[];for(let i=1;i<=n;i++){const v=($('k'+i)?$('k'+i).value:'').trim().toUpperCase();kunci.push(v);}if(kunci.some(k=>!/^[A-E]$/.test(k)))return alert('Kunci jawaban belum lengkap (huruf a–e)!');
+const ex={id:Date.now(),mapel:$('exMapel').value,kelas:normKelas($('exKelas').value),smt:$('exSmt').value,tanggal:$('exTanggal').value,bentuk:$('exBentuk').value,jumlahSoal:n,kkm:+$('exKKM').value||DB.settings.kkm,skorPerSoal:+$('exSkor').value||(100/n),kunci:kunci,guru:$('exGuru').value,nipGuru:$('exNipGuru').value,wali:$('exWali').value,nipWali:$('exNipWali').value,mode:null,results:[],keterampilan:{},rejected:[]};
+DB.exams.push(ex);save();renderExams();$('msgExam').innerHTML=`<span class="ok">Ujian "${esc(ex.mapel)} ${ex.kelas}" tersimpan. Lanjut ke menu Import (CBT) atau Input Manual (NON CBT).</span>`;}
+function renderExams(){$('tblExam').innerHTML=DB.exams.length?`<table><tr><th>No</th><th>Mapel</th><th>Kelas</th><th>Tanggal</th><th>Soal</th><th>KKM</th><th>Moda</th><th>Peserta</th><th class="no-print">Aksi</th></tr>`+DB.exams.map((e,i)=>`<tr><td class="c">${i+1}</td><td>${esc(e.mapel)}</td><td class="c">${e.kelas}</td><td>${e.tanggal||'-'}</td><td class="c">${e.jumlahSoal}</td><td class="c">${e.kkm}</td><td class="c">${e.mode||'-'}</td><td class="c">${e.results.length}</td><td class="no-print"><button class="btn red" style="margin:0;padding:3px 8px" onclick="if(confirm('Hapus ujian?')){DB.exams.splice(${i},1);save();renderExams();}">✖</button></td></tr>`).join('')+'</table>':'<p style="font-size:12px">Belum ada ujian.</p>';}
+
+/* ================= IMPORT CBT ================= */
+function prosesImport(){const ex=getExam($('impExam').value);if(!ex)return alert('Pilih ujian dulu!');const n=ex.jumlahSoal;
+const lines=$('pasteNilai').value.split(/\r?\n/).filter(l=>l.trim());if(lines.length<2)return alert('Data kosong!');
+const rows=lines.map(l=>l.split('\t'));let start=0;if(/timestamp/i.test(rows[0][0]||'')||/nama/i.test(rows[0][1]||''))start=1;
+let parsed=[];for(let i=start;i<rows.length;i++){const r=rows[i];const nisn=(r[2]||'').trim(),nama=(r[1]||'').trim(),kelas=(r[3]||'').trim(),ts=(r[0]||'').trim();if(!nisn||nisn==='.'||!nama||nama==='.')continue;const ans=r.map(c=>(c||'').trim().toUpperCase()).filter(c=>/^[A-E]$/.test(c)).slice(0,n);parsed.push({ts,nama,nisn,kelas,ans,seq:i});}
+/* deduplikasi: NISN sama ambil timestamp terakhir */
+const byN={};parsed.forEach(r=>{const t=Date.parse(r.ts)||r.seq;const ex2=byN[r.nisn];if(!ex2||t>=ex2.t)byN[r.nisn]={...r,t};});
+const dbMap={};DB.students.forEach(s=>dbMap[s.nisn]=s);
+const valid=[],rejected=[];let dupCount=parsed.length-Object.keys(byN).length;
+Object.values(byN).forEach(r=>{const db=dbMap[r.nisn];
+  if(db){valid.push({nisn:r.nisn,nama:db.nama,kelas:db.kelas,ans:r.ans});}
+  else if($('chkAutoAdd').checked){const k=normKelas(r.kelas);DB.students.push({nisn:r.nisn,nama:r.nama,kelas:k});valid.push({nisn:r.nisn,nama:r.nama,kelas:k,ans:r.ans});}
+  else rejected.push(r);});
+if($('chkAutoAdd').checked)DB.students.sort((a,b)=>(a.kelas+a.nama).localeCompare(b.kelas+b.nama));
+/* koreksi otomatis */
+valid.forEach(v=>{let b=0;const detail=v.ans.map((a,i)=>{const ok=a===ex.kunci[i];if(ok)b++;return ok?1:0;});while(detail.length<n)detail.push(0);v.benar=b;v.detail=detail;v.skor=Math.round(b*ex.skorPerSoal);v.status=v.skor>=ex.kkm?'TUNTAS':'REMEDIAL';});
+valid.sort((a,b)=>(a.kelas+a.nama).localeCompare(b.kelas+b.nama));
+ex.results=valid;ex.rejected=rejected;ex.mode='CBT';save();
+let h=`<div class="ok">✔ Baris terbaca: ${parsed.length} • Duplikat dibuang: ${dupCount} • Peserta valid: ${valid.length} • Ditolak (NISN tak dikenal): ${rejected.length}</div>`;
+if(rejected.length)h+=`<div class="err"><b>Data tidak dapat dibaca (NISN tidak ada di database):</b><br>`+rejected.map(r=>`${esc(r.nama)} (${r.nisn})`).join(', ')+`</div>`;
+h+=`<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Kelas</th><th>Benar</th><th>Nilai</th><th>Status</th></tr>`+valid.map((v,i)=>`<tr><td class="c">${i+1}</td><td>${v.nisn}</td><td>${esc(v.nama)}</td><td class="c">${v.kelas}</td><td class="c">${v.benar}/${n}</td><td class="c"><b>${v.skor}</b></td><td class="c">${v.status}</td></tr>`).join('')+`</table>`;
+$('hasilImport').innerHTML=h;}
+
+/* ================= INPUT MANUAL NON CBT ================= */
+function renderManual(){const ex=getExam($('manExam').value);if(!ex){$('areaManual').innerHTML='';return;}
+const list=DB.students.filter(s=>s.kelas===ex.kelas);
+if($('manMode').value==='nilai'){$('areaManual').innerHTML=`<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Nilai Langsung</th></tr>`+list.map((s,i)=>`<tr><td class="c">${i+1}</td><td>${s.nisn}</td><td>${esc(s.nama)}</td><td><input type="number" id="mv${i}" style="width:80px"></td></tr>`).join('')+`</table>`;}
+else{$('areaManual').innerHTML=`<div style="overflow-x:auto"><table><tr><th>No</th><th>NISN</th><th>Nama</th>${Array.from({length:ex.jumlahSoal},(_,i)=>`<th class="c">${i+1}</th>`).join('')}</tr>`+list.map((s,i)=>`<tr><td class="c">${i+1}</td><td>${s.nisn}</td><td>${esc(s.nama)}</td>${Array.from({length:ex.jumlahSoal},(_,j)=>`<td class="c"><input id="mv${i}_${j}" maxlength="1" style="width:30px;text-align:center;padding:3px"></td>`).join('')}</tr>`).join('')+`</table></div>`;}}
+function saveManual(){const ex=getExam($('manExam').value);if(!ex)return alert('Pilih ujian!');const list=DB.students.filter(s=>s.kelas===ex.kelas);const res=[];
+list.forEach((s,i)=>{let skor=0,detail=[],benar=0;
+ if($('manMode').value==='nilai'){skor=+$('mv'+i).value||0;benar=Math.round(skor/ex.skorPerSoal);}
+ else{for(let j=0;j<ex.jumlahSoal;j++){const v=($('mv'+i+'_'+j)?$('mv'+i+'_'+j).value:'').trim().toUpperCase();const ok=v===ex.kunci[j];detail.push(ok?1:0);if(ok)benar++;}skor=Math.round(benar*ex.skorPerSoal);}
+ res.push({nisn:s.nisn,nama:s.nama,kelas:s.kelas,ans:detail.map(d=>d?'✔':'✘'),benar,detail,skor,status:skor>=ex.kkm?'TUNTAS':'REMEDIAL'});});
+ex.results=res;ex.mode='NON CBT';save();alert('Data NON CBT tersimpan & terkoreksi. Peserta: '+res.length);}
+
+/* ================= STATISTIK ================= */
+function stats(ex){const R=ex.results,n=R.length;const sum=R.reduce((s,r)=>s+r.skor,0);const tuntas=R.filter(r=>r.skor>=ex.kkm).length;const perQ=[];for(let i=0;i<ex.jumlahSoal;i++){let c=0;R.forEach(r=>{if(r.detail&&r.detail[i])c++;});perQ.push(c);}return{n,rata:n?sum/n:0,kk:n?tuntas/n*100:0,tuntas,perQ};}
+function rhead(ex,judul){const s=DB.settings;return `<div class="rhead"><div>${judul}</div><div class="pink">${s.sekolah}</div><div>TAHUN PELAJARAN ${s.ta}</div><div style="font-weight:normal;font-size:12px;margin-top:6px">Mata Pelajaran: <b>${esc(ex.mapel)}</b> | Kelas/Semester: <b>${ex.kelas} / ${ex.smt}</b> | Tanggal: <b>${ex.tanggal||'-'}</b> | Moda: <b>${ex.mode}</b></div></div>`;}
+
+/* ================= GENERATE 16 LAPORAN ================= */
+const LAP=[['ANALISIS','CBT','c1'],['Daftar Nilai','CBT','c2'],['ANALISIS','NON CBT','c1'],['Daftar Nilai','NON CBT','c2'],['KESIMPULAN','CBT','c3'],['TARGET','CBT','c4'],['KESIMPULAN','NON CBT','c3'],['TARGET','NON CBT','c4'],['REMEDIAL','CBT','c5'],['PENGAYAAN','CBT','c6'],['REMEDIAL','NON CBT','c5'],['PENGAYAAN','NON CBT','c6'],['KETERAMPILAN','','c7'],['LEMBAR PENYERAHAN','CBT','c7'],['LEMBAR PENYERAHAN','NON CBT','c7'],['LEMBAR SPH UNTUK RDM','','c9']];
+let curReport=null;
+function renderGenButtons(){const ex=getExam($('genExam').value);$('gridGen').innerHTML=LAP.map((L,i)=>{const need=L[1];const ok=!ex?false:(need===''||need===(ex.mode||''));return `<button class="gbtn ${L[2]}" ${ok&&ex.results.length?'':'disabled'} onclick="openReport(${i})">${L[0]}${L[1]?' ('+L[1]+')':''}</button>`;}).join('');$('reportWrap').style.display='none';$('areaKeterampilan').style.display='none';}
+function openReport(i){const ex=getExam($('genExam').value);const L=LAP[i];
+ if(L[0]==='KETERAMPILAN')return inputKeterampilan(ex);
+ if(L[0]==='LEMBAR SPH UNTUK RDM')return showReport(ex,'rdm');
+ const t=L[0].toLowerCase().replace('daftar nilai','nilai');
+ showReport(ex,t,L[1]);}
+function showReport(ex,jenis,modeLabel){const st=stats(ex);let h='';
+ if(jenis==='analisis'){h=rhead(ex,'ANALISIS HASIL PENILAIAN HARIAN ('+(modeLabel||ex.mode)+')')+`<table><tr><th>Peserta</th><th>Rata-rata</th><th>Daya Serap Klasikal</th><th>Ketuntasan Klasikal</th><th>KKM</th></tr><tr><td class="c">${st.n}</td><td class="c">${st.rata.toFixed(1)}</td><td class="c">${st.kk.toFixed(1)}%</td><td class="c">${st.kk.toFixed(1)}% (${st.tuntas}/${st.n})</td><td class="c">${ex.kkm}</td></tr></table><h3>Analisis per Butir Soal</h3><table><tr><th>No Soal</th>${ex.kunci.map((k,i)=>`<th class="c">${i+1}</th>`).join('')}</tr><tr><td>Kunci</td>${ex.kunci.map(k=>`<td class="c"><b>${k}</b></td>`).join('')}</tr><tr><td>Jumlah Benar</td>${st.perQ.map(c=>`<td class="c">${c}</td>`).join('')}</tr><tr><td>Daya Serap</td>${st.perQ.map(c=>`<td class="c">${st.n?(c/st.n*100).toFixed(0):0}%</td>`).join('')}</tr><tr><td>Kategori</td>${st.perQ.map(c=>{const p=st.n?c/st.n*100:0;const k=p>=85?'Sangat Baik':p>=70?'Baik':p>=55?'Cukup':'Kurang';return `<td class="c">${k}</td>`;}).join('')}</tr></table>`;}
+ else if(jenis==='nilai'){const sorted=[...ex.results].sort((a,b)=>b.skor-a.skor);h=rhead(ex,'DAFTAR NILAI PENILAIAN HARIAN ('+(modeLabel||ex.mode)+')')+`<table><tr><th>Rank</th><th>NISN</th><th>Nama</th><th>Kelas</th><th>Benar</th><th>Nilai</th><th>Status</th></tr>`+sorted.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r.nisn}</td><td>${esc(r.nama)}</td><td class="c">${r.kelas}</td><td class="c">${r.benar}/${ex.jumlahSoal}</td><td class="c"><b>${r.skor}</b></td><td class="c">${r.status}</td></tr>`).join('')+`</table>`;}
+ else if(jenis==='kesimpulan'){const ket=st.kk>=85?'TUNTAS secara klasikal (≥85%) — pembelajaran dapat dilanjutkan ke TP berikutnya.':st.kk>=70?'CUKUP (70–84%) — sebagian peserta didik memerlukan remedial terfokus.':'BELUM TUNTAS (<70%) — diperlukan pengulangan pembelajaran.';h=rhead(ex,'KESIMPULAN HASIL PENILAIAN HARIAN ('+(modeLabel||ex.mode)+')')+`<table><tr><td>Jumlah Peserta</td><td><b>${st.n}</b> orang</td></tr><tr><td>Rata-rata Kelas</td><td><b>${st.rata.toFixed(1)}</b></td></tr><tr><td>Ketuntasan Klasikal</td><td><b>${st.kk.toFixed(1)}%</b> (${st.tuntas} tuntas / ${st.n-st.tuntas} belum)</td></tr><tr><td>Kesimpulan</td><td><b>${ket}</b></td></tr></table>`;}
+ else if(jenis==='target'){const lemah=st.perQ.map((c,i)=>({i,p:st.n?c/st.n*100:0})).filter(x=>x.p<70);h=rhead(ex,'TARGET & TINDAK LANJUT ('+(modeLabel||ex.mode)+')')+`<h3>Indikator/Soal yang perlu penguatan (daya serap &lt; 70%)</h3>`+(lemah.length?`<table><tr><th>No Soal</th><th>Daya Serap</th><th>Tindak Lanjut</th></tr>`+lemah.map(x=>`<tr><td class="c">${x.i+1}</td><td class="c">${x.p.toFixed(0)}%</td><td>Penguatan materi soal no ${x.i+1} saat remedial/pembahasan</td></tr>`).join('')+`</table>`:'<p style="font-size:12px">Semua indikator ≥ 70% — tidak ada penguatan khusus.</p>')+`<h3>Target PH Berikutnya</h3><table><tr><td>Target Ketuntasan Klasikal</td><td><b>100% peserta didik ≥ KKM ${ex.kkm}</b></td></tr><tr><td>Remedial</td><td>${st.n-st.tuntas} peserta didik</td></tr><tr><td>Pengayaan</td><td>${st.tuntas} peserta didik</td></tr></table>`;}
+ else if(jenis==='remedial'){const rem=ex.results.filter(r=>r.skor<ex.kkm);h=rhead(ex,'PROGRAM REMEDIAL ('+(modeLabel||ex.mode)+')')+`<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Nilai</th><th>Nomor Soal yang Salah (fokus remedial)</th></tr>`+(rem.length?rem.map((r,i)=>{const salah=r.detail.map((d,j)=>d?null:j+1).filter(x=>x).join(', ');return `<tr><td class="c">${i+1}</td><td>${r.nisn}</td><td>${esc(r.nama)}</td><td class="c">${r.skor}</td><td>${salah||'-'}</td></tr>`;}).join(''):'<tr><td colspan="5">Tidak ada peserta remedial 🎉</td></tr>')+`</table>`;}
+ else if(jenis==='pengayaan'){const pg2=ex.results.filter(r=>r.skor>=ex.kkm);h=rhead(ex,'PROGRAM PENGAYAAN ('+(modeLabel||ex.mode)+')')+`<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Nilai</th><th>Kegiatan Pengayaan</th></tr>`+(pg2.length?pg2.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${r.nisn}</td><td>${esc(r.nama)}</td><td class="c">${r.skor}</td><td>Tutor sebaya / soal HOTS / eksplorasi materi lanjutan</td></tr>`).join(''):'<tr><td colspan="5">Tidak ada peserta pengayaan.</td></tr>')+`</table>`;}
+ else if(jenis==='penyerahan'){h=rhead(ex,'LEMBAR PENYERAHAN NILAI ('+(modeLabel||ex.mode)+')')+`<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Nilai Pengetahuan (PH)</th><th>Nilai Keterampilan</th><th>Rata-rata</th><th>Predikat</th></tr>`+ex.results.map((r,i)=>{const kt=(ex.keterampilan[r.nisn]||[]);const avg=kt.length?kt.reduce((a,b)=>a+(+b||0),0)/kt.filter(x=>x!=='').length:null;const fin=avg!=null?Math.round((r.skor+avg)/2):r.skor;return `<tr><td class="c">${i+1}</td><td>${r.nisn}</td><td>${esc(r.nama)}</td><td class="c">${r.skor}</td><td class="c">${avg!=null?avg.toFixed(0):'-'}</td><td class="c"><b>${fin}</b></td><td class="c">${predikat(fin)}</td></tr>`;}).join('')+`</table>`+sigBlock(ex);}
+ else if(jenis==='rdm'){h=rhead(ex,'LEMBAR SPH UNTUK RDM (RAPOR DIGITAL MADRASAH)')+`<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Nilai</th><th>Predikat</th><th>Deskripsi (otomatis)</th></tr>`+ex.results.map((r,i)=>{const salah=r.detail.map((d,j)=>d?null:j+1).filter(x=>x);const desc=r.skor>=ex.kkm?`Ananda menunjukkan penguasaan baik pada materi ini (daya serap ${Math.round(r.skor)}%), disarankan pemberian pengayaan.`:`Ananda perlu bimbingan ulang pada indikator soal nomor ${salah.join(', ')||'-'} sebelum melanjutkan materi berikutnya.`;return `<tr><td class="c">${i+1}</td><td>${r.nisn}</td><td>${esc(r.nama)}</td><td class="c"><b>${r.skor}</b></td><td class="c">${predikat(r.skor)}</td><td>${desc}</td></tr>`;}).join('')+`</table>`+sigBlock(ex);}
+ $('reportBody').innerHTML=h;$('reportWrap').style.display='block';curReport={ex,jenis};window.scrollTo(0,0);}
+function sigBlock(ex){const s=DB.settings;return `<div class="sig"><div>Wali Kelas,<br><br><br><br><b><u>${esc(ex.wali||'........................')}</u></b><br>NIP. ${ex.nipWali||'-'}</div><div>Guru Mata Pelajaran,<br><br><br><br><b><u>${esc(ex.guru||'........................')}</u></b><br>NIP. ${ex.nipGuru||'-'}</div><div>Mengetahui, Kepala Madrasah,<br><br><br><br><b><u>${esc(s.kepala||'........................')}</u></b><br>NIP. ${s.nipKepala||'-'}</div></div>`;}
+
+/* ================= KETERAMPILAN ================= */
+function inputKeterampilan(ex){const a=$('areaKeterampilan');a.style.display='block';a.innerHTML=`<h2>INPUT NILAI KETERAMPILAN (Praktik 1–3) — ${esc(ex.mapel)} ${ex.kelas}</h2><table><tr><th>No</th><th>Nama</th><th>Praktik 1</th><th>Praktik 2</th><th>Praktik 3</th><th>Rata-rata</th></tr>`+ex.results.map((r,i)=>{const kt=ex.keterampilan[r.nisn]||['','',''];return `<tr><td class="c">${i+1}</td><td>${esc(r.nama)}</td><td><input type="number" id="kt${i}_0" value="${kt[0]||''}" style="width:70px"></td><td><input type="number" id="kt${i}_1" value="${kt[1]||''}" style="width:70px"></td><td><input type="number" id="kt${i}_2" value="${kt[2]||''}" style="width:70px"></td><td class="c" id="kta${i}">-</td></tr>`;}).join('')+`</table><button class="btn green" onclick="saveKeterampilan()">💾 SIMPAN KETERAMPILAN</button>`;
+ ex.results.forEach((r,i)=>{[0,1,2].forEach(j=>{$('kt'+i+'_'+j).oninput=()=>{const v=[0,1,2].map(x=>+$('kt'+i+'_'+x).value||0).filter(x=>x>0);$('kta'+i).textContent=v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):'-';};});});}
+function saveKeterampilan(){const ex=getExam($('genExam').value);ex.results.forEach((r,i)=>{const v=[0,1,2].map(x=>$('kt'+i+'_'+x).value);ex.keterampilan[r.nisn]=v;});save();alert('Nilai keterampilan tersimpan. Silakan buka LEMBAR PENYERAHAN.');}
+
+/* ================= EXPORT / BACKUP ================= */
+function exportCSV(){if(!curReport)return;const ex=curReport.ex;let rows=[['No','NISN','Nama','Kelas','Nilai','Predikat','Status']];ex.results.forEach((r,i)=>rows.push([i+1,r.nisn,r.nama,r.kelas,r.skor,predikat(r.skor),r.status]));const csv=rows.map(r=>r.join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=`SPH_${ex.mapel}_${ex.kelas}.csv`;a.click();}
+function backupJSON(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(DB,null,1)],{type:'application/json'}));a.download='BACKUP_SPH_MAN2PLG.json';a.click();}
+function restoreJSON(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{DB=JSON.parse(r.result);save();loadSettings();alert('Restore berhasil!');location.reload();}catch(e){alert('File tidak valid!')}};r.readAsText(f);}
+
+/* ================= INIT ================= */
+loadSettings();refreshStats();
+</script>
+</body>
+</html>
