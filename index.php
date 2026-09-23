@@ -11,6 +11,12 @@ function excelText($val){
     // Paksa Excel baca sebagai teks (leading zero tetap ada)
     return "'".trim((string)$val);
 }
+function normalizeText($text) {
+    // Hapus apostrof dan tanda baca khusus, normalisasi spasi
+    $text = str_replace(["'", "’", "`", "´"], "", $text);
+    $text = preg_replace('/\s+/', ' ', trim($text));
+    return $text;
+}
 function normKelas($k){
     $s = strtoupper(trim((string)$k));
     
@@ -374,107 +380,201 @@ elseif($act=='tarik_hasil'){
     }
 }
  elseif($act=='import_cbt'){
-$eid=(int)$_POST['exam_id'];
-$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
-if($ex&&($isAdmin||(int)$ex['dibuat_oleh']===0||(int)$ex['dibuat_oleh']===$uid)){
-$n=(int)$ex['jumlah_soal'];
-$kunci=str_split($ex['kunci']);
-$kelasTarget=normKelas($ex['kelas']);
-$lines=array_values(array_filter(array_map('trim',explode("\n",str_replace("\r","",$_POST['paste']??''))),'strlen'));
-$rows=[];foreach($lines as $l)$rows[]=explode("\t",$l);
-$detect=detectImportColumns($rows,$n);
-$map=$detect['map'];
-$start=$detect['dataStart'];
-$colInfo="Timestamp=Kolom ".($map['timestamp']+1)." | Nama=Kolom ".($map['nama']+1)." | NISN=Kolom ".($map['nisn']+1)." | Kelas=Kolom ".($map['kelas']+1);
-if(!empty($map['skip']))$colInfo.=" | ⚠️ Skip (Score)=Kolom ".implode(',',array_map(function($x){return $x+1;},$map['skip']));
-$parsed=[];
-for($i=$start;$i<count($rows);$i++){
-$r=$rows[$i];
-$nisn=trim($r[$map['nisn']]??'');
-$nama=trim($r[$map['nama']]??'');
-$kelas=trim($r[$map['kelas']]??'');
-if(!$nisn||$nisn==='.'||!$nama||$nama==='.')continue;
-$ans=[];
-if(!empty($map['jawaban'])){foreach($map['jawaban'] as $jc){$cc=strtoupper(trim($r[$jc]??''));if(preg_match('/^[A-E]$/',$cc))$ans[]=$cc;}}
-else{foreach($r as $idx=>$cc){if(in_array($idx,$map['skip']))continue;$cc=strtoupper(trim($cc));if(preg_match('/^[A-E]$/',$cc))$ans[]=$cc;}}
-$parsed[]=['ts'=>trim($r[$map['timestamp']]??''),'nama'=>$nama,'nisn'=>$nisn,'kelas'=>$kelas,'ans'=>array_slice($ans,0,$n),'seq'=>$i];
-}
-$byN=[];
-foreach($parsed as $r){$t=strtotime($r['ts'])?:$r['seq'];if(!isset($byN[$r['nisn']])||$t>=$byN[$r['nisn']]['t']){$r['t']=$t;$byN[$r['nisn']]=$r;}}
-$auto=false; // Selalu false, tidak ada auto-add lagi
-$valid=[];
-$dup=count($parsed)-count($byN);
-$kelasMismatch=[];
-foreach($byN as $r){
-$kelasRow=normKelas($r['kelas']);
-if($kelasRow!==$kelasTarget){
-$kelasMismatch[]=$r;
-continue;
-}
-$st=$conn->query("SELECT * FROM students WHERE nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();
-if($st){
-$valid[]=['nisn'=>$st['nisn'],'nama'=>$st['nama'],'kelas'=>$st['kelas'],'ans'=>$r['ans']];
-}elseif($auto){
-$kk=normKelas($r['kelas']);
-$conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('".$conn->real_escape_string($r['nisn'])."','".$conn->real_escape_string($r['nama'])."','".$conn->real_escape_string($kk)."') ON DUPLICATE KEY UPDATE nama=VALUES(nama)");
-$valid[]=['nisn'=>$r['nisn'],'nama'=>$r['nama'],'kelas'=>$kk,'ans'=>$r['ans']];
-}else $rejected[]=$r;
-}
-if($st){
-  $valid[]=['nisn'=>$st['nisn'],'nama'=>$st['nama'],'kelas'=>$st['kelas'],'ans'=>$r['ans']];
-} else {
-  $rejected[]=$r; // Tolak jika NISN tidak ditemukan
-}
-usort($valid,function($a,$b){return strcmp($a['kelas'].$a['nama'],$b['kelas'].$b['nama']);});
-
-// 1. Hapus hasil lama
-$conn->query("DELETE FROM results WHERE exam_id=$eid");
-
-// 2. Insert siswa yang ikut ujian (dari file)
-foreach($valid as $v){
-$b=0;$det='';
-for($i=0;$i<$n;$i++){
-$ok=isset($v['ans'][$i])&&$v['ans'][$i]===$kunci[$i];
-$det.=$ok?'1':'0';
-if($ok)$b++;
-}
-$skor=(int)round($b*(float)$ex['skor_per_soal']);
-$status=$skor>=$ex['kkm']?'TUNTAS':'REMEDIAL';
-$conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) VALUES ($eid,'".$conn->real_escape_string($v['nisn'])."','".$conn->real_escape_string($v['nama'])."','".$conn->real_escape_string($v['kelas'])."','".$conn->real_escape_string(implode('',$v['ans']))."','$det',$b,$skor,'$status')");
-}
-
-// 3. BARU: Cari dan insert siswa yang TIDAK IKUT ujian (ada di database kelas ini, tapi tidak di file)
-$importedNisn = [];
-foreach($valid as $v) {
-    $importedNisn[] = "'".$conn->real_escape_string($v['nisn'])."'";
-}
-$det0 = str_repeat('0', $n); // Detail jawaban semua salah (0)
-
-if(!empty($importedNisn)){
-    $nisnList = implode(',', $importedNisn);
-    $qMissing = $conn->query("SELECT nisn, nama, kelas FROM students WHERE kelas='".$conn->real_escape_string($kelasTarget)."' AND nisn NOT IN ($nisnList)");
-    while($m = $qMissing->fetch_assoc()){
-        $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
-            VALUES ($eid,'".$conn->real_escape_string($m['nisn'])."','".$conn->real_escape_string($m['nama'])."','".$conn->real_escape_string($m['kelas'])."','','".$det0."',0,0,'REMEDIAL')");
+    // Naikkan limit runtime untuk proses ini
+    @set_time_limit(300);
+    @ini_set('memory_limit', '512M');
+    
+    $eid=(int)$_POST['exam_id'];
+    $ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
+    if($ex&&($isAdmin||(int)$ex['dibuat_oleh']===0||(int)$ex['dibuat_oleh']===$uid)){
+        $n=(int)$ex['jumlah_soal'];
+        $kunci=str_split($ex['kunci']);
+        $kelasTarget=normKelas($ex['kelas']);
+        $kelasTargetEsc=$conn->real_escape_string($kelasTarget);
+        
+        // Parse baris - gunakan str_replace untuk hindari masalah \r\n
+        $paste=$_POST['paste']??'';
+        $paste=str_replace(["\r\n","\r"],"\n",$paste);
+        $lines=array_values(array_filter(explode("\n",$paste),'strlen'));
+        
+        $rows=[];
+        foreach($lines as $l) $rows[]=explode("\t",$l);
+        
+        // Deteksi kolom otomatis
+        $detect=detectImportColumns($rows,$n);
+        $map=$detect['map'];
+        $start=$detect['dataStart'];
+        
+        $colInfo="Timestamp=Kolom ".($map['timestamp']+1)." | Nama=Kolom ".($map['nama']+1)." | NISN=Kolom ".($map['nisn']+1)." | Kelas=Kolom ".($map['kelas']+1);
+        if(!empty($map['skip']))$colInfo.=" | ⚠️ Skip (Score)=Kolom ".implode(',',array_map(function($x){return $x+1;},$map['skip']));
+        
+        // === OPTIMASI: Load semua students kelas target SEKALI ===
+        $studentsMap=[];
+        $qAll=$conn->query("SELECT nisn,nama,kelas FROM students WHERE kelas='$kelasTargetEsc'");
+        while($s=$qAll->fetch_assoc()){
+            $studentsMap[$s['nisn']]=$s;
+        }
+        
+        // Parsing data
+        $parsed=[];
+        for($i=$start;$i<count($rows);$i++){
+            $r=$rows[$i];
+            $nisn=trim($r[$map['nisn']]??'');
+            $nama=trim($r[$map['nama']]??'');
+            $kelas=trim($r[$map['kelas']]??'');
+            if(!$nisn||$nisn==='.'||!$nama||$nama==='.')continue;
+            
+            $ans=[];
+            if(!empty($map['jawaban'])){
+                foreach($map['jawaban'] as $jc){
+                    $cc=strtoupper(trim($r[$jc]??''));
+                    if(preg_match('/^[A-E]$/',$cc))$ans[]=$cc;
+                }
+            } else {
+                foreach($r as $idx=>$cc){
+                    if(in_array($idx,$map['skip']))continue;
+                    $cc=strtoupper(trim($cc));
+                    if(preg_match('/^[A-E]$/',$cc))$ans[]=$cc;
+                }
+            }
+            
+            $parsed[]=[
+                'ts'=>trim($r[$map['timestamp']]??''),
+                'nama'=>$nama,
+                'nisn'=>$nisn,
+                'kelas'=>$kelas,
+                'ans'=>array_slice($ans,0,$n),
+                'seq'=>$i
+            ];
+            
+            // Hemat memory: hapus referensi baris yang sudah diproses
+            unset($rows[$i]);
+        }
+        
+        // Handle duplikat - ambil submission terakhir
+        $byN=[];
+        foreach($parsed as $r){
+            $t=strtotime($r['ts'])?:$r['seq'];
+            if(!isset($byN[$r['nisn']])||$t>=$byN[$r['nisn']]['t']){
+                $r['t']=$t;
+                $byN[$r['nisn']]=$r;
+            }
+        }
+        unset($parsed); // Hemat memory
+        
+        $auto=isset($_POST['auto_add']);
+        $valid=[];
+        $dup=count($byN); // sudah di-dedup
+        $kelasMismatch=[];
+        $rejected=[];
+        
+    foreach($byN as $r){
+    $kelasRow=normKelas($r['kelas']);
+    if($kelasRow!==$kelasTarget){
+        $kelasMismatch[]=$r;
+        continue;
     }
-} else {
-    // Jika file kosong total, semua siswa di kelas ini dianggap tidak ikut
-    $qMissing = $conn->query("SELECT nisn, nama, kelas FROM students WHERE kelas='".$conn->real_escape_string($kelasTarget)."'");
-    while($m = $qMissing->fetch_assoc()){
-        $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
-            VALUES ($eid,'".$conn->real_escape_string($m['nisn'])."','".$conn->real_escape_string($m['nama'])."','".$conn->real_escape_string($m['kelas'])."','','".$det0."',0,0,'REMEDIAL')");
+            $nisnNorm=normalizeText($r['nisn']);
+    $namaNorm=normalizeText($r['nama']);
+    
+    $st=$conn->query("SELECT * FROM students WHERE nisn='".$conn->real_escape_string($nisnNorm)."'")->fetch_assoc();
+    
+    if($st){
+        $valid[]=['nisn'=>$st['nisn'],'nama'=>$st['nama'],'kelas'=>$st['kelas'],'ans'=>$r['ans']];
+    } elseif($auto){
+        $kk=normKelas($r['kelas']);
+        // Normalisasi sebelum insert
+            // === OPTIMASI: Cek dari map yang sudah diload ===
+            if(isset($studentsMap[$r['nisn']])){
+                $st=$studentsMap[$r['nisn']];
+                $valid[]=['nisn'=>$st['nisn'],'nama'=>$st['nama'],'kelas'=>$st['kelas'],'ans'=>$r['ans']];
+                
+            } elseif($auto){
+                $kk=$kelasRow;
+                $nisnEsc=$conn->real_escape_string($r['nisn']);
+                $namaEsc=$conn->real_escape_string($r['nama']);
+                $conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('$nisnEsc','$namaEsc','$kk') ON DUPLICATE KEY UPDATE nama=VALUES(nama)");
+                $valid[]=['nisn'=>$r['nisn'],'nama'=>$r['nama'],'kelas'=>$kk,'ans'=>$r['ans']];
+                // Update map agar tidak query lagi
+                $studentsMap[$r['nisn']]=['nisn'=>$r['nisn'],'nama'=>$r['nama'],'kelas'=>$kk];
+            } else {
+                $rejected[]=$r;
+            }
+        }
+        unset($byN);
+        
+        usort($valid,function($a,$b){return strcmp($a['kelas'].$a['nama'],$b['kelas'].$b['nama']);});
+        
+        // === OPTIMASI: Gunakan TRANSACTION untuk kecepatan ===
+        $conn->query("START TRANSACTION");
+        $conn->query("DELETE FROM results WHERE exam_id=$eid");
+        
+        $insertCount=0;
+        foreach($valid as $v){
+            $b=0;$det='';
+            for($i=0;$i<$n;$i++){
+                $ok=isset($v['ans'][$i])&&$v['ans'][$i]===$kunci[$i];
+                $det.=$ok?'1':'0';
+                if($ok)$b++;
+            }
+            $skor=(int)round($b*(float)$ex['skor_per_soal']);
+            $status=$skor>=$ex['kkm']?'TUNTAS':'REMEDIAL';
+            
+            $nisnEsc=$conn->real_escape_string($v['nisn']);
+            $namaEsc=$conn->real_escape_string($v['nama']);
+            $kelasEsc=$conn->real_escape_string($v['kelas']);
+            $ansEsc=$conn->real_escape_string(implode('',$v['ans']));
+            
+            $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
+                VALUES ($eid,'$nisnEsc','$namaEsc','$kelasEsc','$ansEsc','$det',$b,$skor,'$status')");
+            $insertCount++;
+            
+            // Commit per 50 record untuk hindari lock table terlalu lama
+            if($insertCount%50===0){
+                $conn->query("COMMIT");
+                $conn->query("START TRANSACTION");
+            }
+        }
+        
+        // Insert siswa yang TIDAK IKUT ujian (dari studentsMap)
+        $validNisn=[];
+        foreach($valid as $v) $validNisn[$v['nisn']]=true;
+        
+        $det0=str_repeat('0',$n);
+        $missingCount=0;
+        foreach($studentsMap as $nisn=>$siswa){
+            if(!isset($validNisn[$nisn])){
+                $nisnEsc=$conn->real_escape_string($siswa['nisn']);
+                $namaEsc=$conn->real_escape_string($siswa['nama']);
+                $kelasEsc=$conn->real_escape_string($siswa['kelas']);
+                $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
+                    VALUES ($eid,'$nisnEsc','$namaEsc','$kelasEsc','','$det0',0,0,'REMEDIAL')");
+                $missingCount++;
+            }
+        }
+        
+        $conn->query("COMMIT");
+        $conn->query("UPDATE exams SET mode='CBT' WHERE id=$eid");
+        
+        $impInfo="✔ <b>Deteksi Kolom:</b> $colInfo<br>🎯 <b>Filter Kelas:</b> $kelasTarget<br>📊 Baris terbaca: ".count($lines)." • Duplikat dibuang: ".(count($lines)-count($byN))." • Peserta valid: $insertCount • Tidak ikut: $missingCount • Ditolak (NISN): ".count($rejected)." • Kelas beda: ".count($kelasMismatch);
+        
+        if(!empty($kelasMismatch)){
+            $impInfo.='<div class="err" style="margin-top:10px"><b>⚠️ Data diabaikan karena kelas tidak sesuai (target: '.$kelasTarget.'):</b><ul style="margin:5px 0;padding-left:20px;font-size:12px">';
+            foreach(array_slice($kelasMismatch,0,20) as $r){
+                $impInfo.='<li><b>'.e($r['nama']).'</b> — NISN: '.e($r['nisn']).' — Kelas di file: <b>'.e($r['kelas']).'</b></li>';
+            }
+            if(count($kelasMismatch)>20) $impInfo.='<li>...dan '.(count($kelasMismatch)-20).' lainnya</li>';
+            $impInfo.='</ul></div>';
+        }
+        if($rejected){
+            $impInfo.='<div class="err" style="margin-top:10px"><b>❌ Tidak dapat dibaca (NISN tidak dikenal):</b><ul style="margin:5px 0;padding-left:20px;font-size:12px">';
+            foreach(array_slice($rejected,0,20) as $r){
+                $impInfo.='<li><b>'.e($r['nama']).'</b> (NISN: '.e($r['nisn']).', Kelas: '.e($r['kelas']).')</li>';
+            }
+            if(count($rejected)>20) $impInfo.='<li>...dan '.(count($rejected)-20).' lainnya</li>';
+            $impInfo.='</ul></div>';
+        }
     }
-}
-
-$conn->query("UPDATE exams SET mode='CBT' WHERE id=$eid");
-$impInfo="✔ <b>Deteksi Kolom:</b> $colInfo<br>🎯 <b>Filter Kelas:</b> $kelasTarget<br> Baris terbaca: ".count($parsed)." • Duplikat dibuang: $dup • Peserta valid: ".count($valid)." • Ditolak (NISN): ".count($rejected)." • Ditolak (Kelas beda): ".count($kelasMismatch);
-if(!empty($kelasMismatch)){
-$impInfo.='<div class="err" style="margin-top:10px"><b>⚠️ Data diabaikan karena kelas tidak sesuai (target: '.$kelasTarget.'):</b><ul style="margin:5px 0;padding-left:20px;font-size:12px">';
-foreach($kelasMismatch as $r){$impInfo.='<li><b>'.e($r['nama']).'</b> — NISN: '.e($r['nisn']).' — Kelas di file: <b>'.e($r['kelas']).'</b></li>';}
-$impInfo.='</ul></div>';
-}
-if($rejected){$impInfo.='<div class="err" style="margin-top:10px"><b>Tidak dapat dibaca (NISN tidak dikenal):</b><ul style="margin:5px 0;padding-left:20px;font-size:12px">';foreach($rejected as $r)$impInfo.='<li><b>'.e($r['nama']).'</b> (NISN: '.e($r['nisn']).', Kelas: '.e($r['kelas']).')</li>';$impInfo.='</ul></div>';}
-}
 }
 elseif($act=='process_verification'){
     $eid=(int)$_POST['exam_id'];
@@ -558,14 +658,58 @@ elseif($act=='process_verification'){
     $msg='Pengaturan tersimpan.';
 }
    elseif($act=='add_siswa'){$n=$conn->real_escape_string(trim($_POST['nisn']));$m=$conn->real_escape_string(trim($_POST['nama']));$k=$conn->real_escape_string(normKelas($_POST['kelas']));$conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('$n','$m','$k') ON DUPLICATE KEY UPDATE nama='$m',kelas='$k'");$msg='Siswa tersimpan.';}
-      elseif($act=='import_siswa'){$c=0;$map=null;foreach(array_filter(array_map('trim',preg_split('/\r?\n/',$_POST['paste_siswa'])),'strlen') as $l){$r=explode("\t",$l);
-     if($map===null){$low=array_map(function($x){return strtolower(trim($x));},$r);$join=implode(' ',$low);
-       if(strpos($join,'nisn')!==false||strpos($join,'nama')!==false||strpos($join,'kelas')!==false){$map=['nisn'=>0,'nama'=>1,'kelas'=>2];foreach($low as $i=>$h){if(strpos($h,'nisn')!==false)$map['nisn']=$i;elseif(strpos($h,'nama')!==false)$map['nama']=$i;elseif(strpos($h,'kelas')!==false||strpos($h,'rombel')!==false)$map['kelas']=$i;}continue;}
-       else{$map=['nisn'=>0,'nama'=>1,'kelas'=>2];}}
-     $nisn=trim($r[$map['nisn']]??'');$nama=trim($r[$map['nama']]??'');$kelas=normKelas(trim($r[$map['kelas']]??''));
-     if($nisn!==''&&!preg_match('/^\d+$/',$nisn)&&preg_match('/^\d{8,}$/',$nama)){$t=$nisn;$nisn=$nama;$nama=$t;}
-     $nisn=$conn->real_escape_string($nisn);$nama=$conn->real_escape_string($nama);$kelas=$conn->real_escape_string($kelas);
-     if(!$nisn||!$nama||$nisn==='.')continue;$conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('$nisn','$nama','$kelas') ON DUPLICATE KEY UPDATE nama='$nama',kelas='$kelas'");$c++;}$msg="$c siswa terimport.";}
+      elseif($act=='import_siswa'){
+    $c=0;
+    $map=null;
+    foreach(array_filter(array_map('trim',preg_split('/\r?\n/',$_POST['paste_siswa'])),'strlen') as $l){
+        $r=explode("\t",$l);
+        if($map===null){
+            $low=array_map(function($x){return strtolower(trim($x));},$r);
+            $join=implode(' ',$low);
+            if(strpos($join,'nisn')!==false||strpos($join,'nama')!==false||strpos($join,'kelas')!==false){
+                $map=['nisn'=>0,'nama'=>1,'kelas'=>2];
+                foreach($low as $i=>$h){
+                    if(strpos($h,'nisn')!==false)$map['nisn']=$i;
+                    elseif(strpos($h,'nama')!==false)$map['nama']=$i;
+                    elseif(strpos($h,'kelas')!==false||strpos($h,'rombel')!==false)$map['kelas']=$i;
+                }
+                continue;
+            } else {
+                $map=['nisn'=>0,'nama'=>1,'kelas'=>2];
+            }
+        }
+        
+        $nisn=trim($r[$map['nisn']]??'');
+        $nama=trim($r[$map['nama']]??'');
+        $kelas=normKelas(trim($r[$map['kelas']]??''));
+        
+        // Normalisasi: hapus apostrof dari NISN dan Nama
+        $nisn=normalizeText($nisn);
+        $nama=normalizeText($nama);
+        
+        if($nisn!==''&&!preg_match('/^\d+$/',$nisn)&&preg_match('/^\d{8,}$/',$nama)){
+            $t=$nisn;$nisn=$nama;$nama=$t;
+            $nisn=normalizeText($nisn);
+            $nama=normalizeText($nama);
+        }
+        
+        $nisn=$conn->real_escape_string($nisn);
+        $nama=$conn->real_escape_string($nama);
+        $kelas=$conn->real_escape_string($kelas);
+        
+        if(!$nisn||!$nama||$nisn==='.')continue;
+        
+        // Cek apakah sudah ada dengan normalisasi
+        $cek=$conn->query("SELECT nisn FROM students WHERE nisn='".$nisn."'")->fetch_assoc();
+        if($cek){
+            $conn->query("UPDATE students SET nama='$nama',kelas='$kelas' WHERE nisn='$nisn'");
+        } else {
+            $conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('$nisn','$nama','$kelas')");
+        }
+        $c++;
+    }
+    $msg="$c siswa terimport.";
+}
    elseif($act=='del_siswa'){$conn->query("DELETE FROM students WHERE nisn='".$conn->real_escape_string($_POST['nisn'])."'");}
 elseif($act=='del_siswa_selected' && $isAdmin){
   $nisnArr = $_POST['nisn'] ?? [];
