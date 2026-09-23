@@ -1,4 +1,7 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
 session_start();
 require __DIR__.'/config.php';
 define('LOGO_URL','https://man2plg.sch.id/Foto/logo.png');
@@ -1145,7 +1148,11 @@ function buatInd(){var old={};document.querySelectorAll('#ii input').forEach(fun
 
 <br><button class="btn green">⚙ IMPORT & KOREKSI OTOMATIS</button> <a class="btn gray" href="?p=import">🧹 BERSIH</a></form>
 <?php if($impInfo)echo '<div class="ok">'.$impInfo.'</div>'; ?>
-<?php if($examSel){$res=getResults($conn,$examSel['id']);if($res){echo '<table class="tbl" style="margin-top:15px"><thead><tr><th>No</th><th>NISN</th><th>Nama</th><th>Kelas</th><th>Benar</th><th>Nilai</th><th>Status</th></tr></thead><tbody>';foreach($res as $i=>$r)echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.e($r['kelas']).'</td><td class="c">'.$r['benar'].'/'.$examSel['jumlah_soal'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.e($r['status']).'</td></tr>';echo '</tbody></table>';}}?>
+<?php if($examSel){$res=getResults($conn,$examSel['id']);if($res){
+    echo '<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Kelas</th><th>Benar</th><th>Nilai</th><th>Status</th></tr>';
+    foreach($res as $i=>$r)echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.e($r['kelas']).'</td><td class="c">'.$r['benar'].'/'.$examSel['jumlah_soal'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.e($r['status']).'</td></tr>';
+    echo '</table>';
+}} ?>
 </div>
 <script>document.getElementById('fileHasil').onchange=function(ev){var f=ev.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(e2){var wb=XLSX.read(e2.target.result,{type:'array'});var ws=wb.Sheets[wb.SheetNames[0]];document.getElementById('pasteNilai').value=XLSX.utils.sheet_to_csv(ws,{FS:'\t'});};r.readAsArrayBuffer(f);};</script>
 <?php } ?>
@@ -1367,5 +1374,5 @@ foreach($res as $i=>$r){echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn'
 echo '</table>'.sigBlock($examSel,$set);
 }
 echo '</div>';
-} } } ?>
+} } } }   ?>
 </main></body></html>
