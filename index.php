@@ -7,10 +7,48 @@ function encPass($p){$k=substr(hash('sha256',SPH_KEY),0,32);$iv=substr(hash('sha
 function decPass($p){if($p==='')return '';$k=substr(hash('sha256',SPH_KEY),0,32);$iv=substr(hash('sha256','SPH-IV'),0,16);$r=openssl_decrypt(base64_decode($p),'aes-256-cbc',$k,0,$iv);return ($r!==false&&$r!=='')?$r:$p;}
 function logoImg($s=70){return '<img src="'.LOGO_URL.'" alt="Logo" style="width:'.$s.'px;height:'.$s.'px;object-fit:contain;display:block;margin:0 auto 6px">';}
 function e($s){return htmlspecialchars((string)$s,ENT_QUOTES,'UTF-8');}
-function normKelas($k){$s=strtoupper(trim((string)$k));$s=preg_replace('/\s+/','',$s);$s=str_replace('.','',$s);$s=str_replace('XLL','XII',$s);$s=preg_replace('/^12/','XII',$s);$s=preg_replace('/^11/','XI',$s);$s=preg_replace('/^10/','X',$s);return preg_match('/^([XIV]+)(\d+[A-Z]?)$/',$s,$m)?$m[1].'.'.$m[2]:$s;}
+function excelText($val){
+    // Paksa Excel baca sebagai teks (leading zero tetap ada)
+    return "'".trim((string)$val);
+}
+function normKelas($k){
+    $s = strtoupper(trim((string)$k));
+    
+    // Hapus semua spasi berlebih
+    $s = preg_replace('/\s+/', ' ', $s);
+    
+    // Hapus tanda pemisah: strip, titik, garis miring
+    $s = preg_replace('/[-\.\/]/', '', $s);
+    
+    // Hapus spasi lagi setelah hapus tanda pemisah
+    $s = preg_replace('/\s+/', '', $s);
+    
+    // Koreksi typo umum
+    $s = str_replace('XLL', 'XII', $s);
+    $s = str_replace('LL', 'L', $s);
+    $s = str_replace('IIII', 'IV', $s);
+    
+    // Konversi angka ke romawi untuk awal string
+    $s = preg_replace('/^12/', 'XII', $s);
+    $s = preg_replace('/^11/', 'XI', $s);
+    $s = preg_replace('/^10/', 'X', $s);
+    $s = preg_replace('/^9/', 'IX', $s);
+    $s = preg_replace('/^8/', 'VIII', $s);
+    $s = preg_replace('/^7/', 'VII', $s);
+    
+    // Tangkap pola: ROMAWI + ANGKA + OPSIONAL HURUF
+    // Contoh: XII1, XI2A, X3B
+    if(preg_match('/^(X|XI|XII|IX|VIII|VII)(\d+)([A-Z]?)$/', $s, $m)){
+        return $m[1].'.'.$m[2].$m[3];
+    }
+    
+    // Fallback: kembalikan asli jika tidak cocok
+    return $s;
+}
 function kelasRank($k){$rom=['I'=>1,'II'=>2,'III'=>3,'IV'=>4,'V'=>5,'VI'=>6,'VII'=>7,'VIII'=>8,'IX'=>9,'X'=>10,'XI'=>11,'XII'=>12];if(preg_match('/^([XIV]+)\.(\d+[A-Z]?)$/',$k,$m)){$r=$rom[$m[1]]??50;return $r*1000+(int)$m[2];}return 99999;}
 function predikat($c,$n){$q=$c->query("SELECT * FROM kkm_range ORDER BY min DESC");while($x=$q->fetch_assoc()){if($n>=(int)$x['min']&&$n<=(int)$x['max'])return $x['predikat'];}return 'D';}
 function rentangTable($c){$h='<table style="width:auto"><tr><th>Rentang Nilai</th><th>Predikat</th><th>Keterangan</th></tr>';$q=$c->query("SELECT * FROM kkm_range ORDER BY min DESC");while($x=$q->fetch_assoc())$h.='<tr><td class="c">'.$x['min'].' — '.$x['max'].'</td><td class="c">'.e($x['predikat']).'</td><td>'.e($x['keterangan']).'</td></tr>';return $h.'</table>';}
+
 function deskripsiOf($r,$ex,$c){$n=$ex['jumlah_soal'];
  $ind=[];$q=$c->query("SELECT no_soal,indikator FROM indikator WHERE exam_id=".$ex['id']." ORDER BY no_soal");while($x=$q->fetch_assoc())$ind[(int)$x['no_soal']]=strtolower(trim($x['indikator']));
  $det=(string)$r['detail'];$len=strlen($det);
@@ -24,7 +62,176 @@ function deskripsiOf($r,$ex,$c){$n=$ex['jumlah_soal'];
  if(!$belum)return 'Ananda mampu menguasai seluruh indikator ('.implode('; ',$mampu).') dengan sangat baik.';
  if(!$mampu)return 'Ananda perlu bimbingan intensif pada indikator: '.implode('; ',$belum).' (soal no. '.implode(', ',$noBelum).').';
  return 'Ananda mampu '.implode('; ',$mampu).'; namun perlu bimbingan pada '.implode('; ',$belum).' (soal no. '.implode(', ',$noBelum).').';}
-function getResults($c,$eid){$r=[];$q=$c->query("SELECT * FROM results WHERE exam_id=$eid ORDER BY kelas,nama");while($x=$q->fetch_assoc())$r[]=$x;return $r;}
+function findSimilarStudents($conn, $nama, $kelas, $limit=5){
+    $results = [];
+    if(!$conn) return $results;
+    
+    // Validasi input - tolak data yang jelas bukan nama/kelas
+    $namaClean = trim($nama);
+    $kelasClean = trim($kelas);
+    
+    // Tolak jika nama terlalu panjang (>100 char) atau terlalu pendek (<2 char)
+    if(strlen($namaClean) < 2 || strlen($namaClean) > 100) return $results;
+    
+    // Tolak jika kelas tidak masuk akal (terlalu panjang atau tidak ada huruf romawi)
+    if(strlen($kelasClean) > 15 || !preg_match('/[XIVX]/i', $kelasClean)) return $results;
+    
+    // Tolak jika nama mengandung karakter aneh (soal, tanda baca berlebihan)
+    if(preg_match('/^(soal|pertanyaan|jawaban|pilih|manakah|berikut|yang|adalah|dari|pada|dalam|untuk|dengan|menurut|sebutkan|jelaskan|analisis)/i', $namaClean)) return $results;
+    if(substr_count($namaClean, '.') > 3 || substr_count($namaClean, ',') > 2) return $results;
+    
+    $namaEsc = $conn->real_escape_string($namaClean);
+    $kelasEsc = $conn->real_escape_string($kelasClean);
+    
+    // Query 1: Cari di kelas yang sama
+    $q = $conn->query("SELECT nisn, nama, kelas FROM students 
+        WHERE kelas='$kelasEsc' 
+        AND (nama LIKE '%$namaEsc%' OR LOWER(nama) LIKE LOWER('%$namaEsc%'))
+        ORDER BY nama LIMIT $limit");
+    
+    if($q){
+        while($row = $q->fetch_assoc()){
+            $results[] = $row;
+        }
+    }
+    
+    // Query 2: Jika tidak ada di kelas yang sama, cari di kelas lain
+    if(empty($results)){
+        $q2 = $conn->query("SELECT nisn, nama, kelas FROM students 
+            WHERE (nama LIKE '%$namaEsc%' OR LOWER(nama) LIKE LOWER('%$namaEsc%'))
+            ORDER BY kelas, nama LIMIT $limit");
+        if($q2){
+            while($row = $q2->fetch_assoc()){
+                $results[] = $row;
+            }
+        }
+    }
+    
+    return $results;
+}
+ function detectImportColumns($rows, $n_soal) {
+    if (empty($rows)) return ['map'=>['timestamp'=>0,'nama'=>1,'nisn'=>2,'kelas'=>3,'jawaban'=>[],'skip'=>[]],'dataStart'=>0];
+    
+    $default = ['timestamp'=>0,'nama'=>1,'nisn'=>2,'kelas'=>3,'jawaban'=>[],'skip'=>[]];
+    
+    // ===== CEK APAKAH BARIS PERTAMA HEADER =====
+    $firstRow = $rows[0];
+    $headerText = strtolower(implode(' ', $firstRow));
+    $isHeader = (strpos($headerText, 'timestamp') !== false || 
+                 strpos($headerText, 'nama') !== false ||
+                 strpos($headerText, 'nisn') !== false ||
+                 strpos($headerText, 'waktu') !== false ||
+                 strpos($headerText, 'time') !== false);
+    
+    if ($isHeader) {
+        $map = $default;
+        $headerLower = array_map(function($h){return strtolower(trim($h));}, $firstRow);
+        
+        // Mapping berdasarkan nama header
+        foreach ($headerLower as $i => $h) {
+            if (preg_match('/timestamp|waktu|time|tanggal/', $h)) $map['timestamp'] = $i;
+            elseif (preg_match('/^nama(\s+(siswa|peserta|lengkap))?$/', $h)) $map['nama'] = $i;
+            elseif (preg_match('/^nisn$/', $h)) $map['nisn'] = $i;
+            elseif (preg_match('/^(kelas|rombel|class|rombongan\s+belajar)$/', $h)) $map['kelas'] = $i;
+            elseif (preg_match('/^(score|nilai|skor|jumlah|total|benar)$/', $h)) $map['skip'][] = $i;
+        }
+        
+        // Deteksi kolom jawaban dari baris data pertama
+        if (isset($rows[1])) {
+            $dataRow = $rows[1];
+            for ($i = 0; $i < count($dataRow); $i++) {
+                if ($i === $map['timestamp'] || $i === $map['nama'] || 
+                    $i === $map['nisn'] || $i === $map['kelas'] || 
+                    in_array($i, $map['skip'])) continue;
+                
+                $val = strtoupper(trim($dataRow[$i] ?? ''));
+                if (preg_match('/^[A-E]$/', $val)) {
+                    $map['jawaban'][] = $i;
+                }
+            }
+        }
+        
+        return ['map' => $map, 'dataStart' => 1];
+    }
+    // Di dalam detectImportColumns(), setelah deteksi nama:
+if ($map['nama'] === null) {
+    for ($i = 0; $i < $colCount; $i++) {
+        if ($i !== $map['timestamp'] && $i !== $map['nisn'] &&
+            $i !== $map['kelas'] && !in_array($i, $map['jawaban']) &&
+            !in_array($i, $map['skip'])) {
+            // Validasi: kolom ini harus berisi nama yang masuk akal
+            $sampleVal = trim($sampleRows[0][$i] ?? '');
+            if (strlen($sampleVal) >= 2 && strlen($sampleVal) <= 100 && 
+                preg_match('/^[A-Za-z\s\.\,\-\'\']+$/', $sampleVal) &&
+                !preg_match('/^(soal|pertanyaan|jawaban|pilih|manakah|berikut|yang|adalah)/i', $sampleVal)) {
+                $map['nama'] = $i;
+                break;
+            }
+        }
+    }
+}
+    // ===== AUTO-DETECT BERDASARKAN POLA DATA =====
+    $sampleRows = array_slice($rows, 0, min(5, count($rows)));
+    $colCount = max(array_map('count', $sampleRows));
+    
+    $map = ['timestamp'=>null,'nama'=>null,'nisn'=>null,'kelas'=>null,'jawaban'=>[],'skip'=>[]];
+    
+    for ($c = 0; $c < $colCount; $c++) {
+        $counts = ['nisn'=>0,'kelas'=>0,'jawaban'=>0,'nama'=>0,'score'=>0,'ts'=>0];
+        $total = 0;
+        
+        foreach ($sampleRows as $row) {
+            $val = trim($row[$c] ?? '');
+            if ($val === '') continue;
+            $total++;
+            
+            // NISN: angka 8-12 digit
+            if (preg_match('/^\d{8,12}$/', $val)) $counts['nisn']++;
+            // Kelas: X.1, XI.2, XII.3, dll
+            elseif (preg_match('/^(X|XI|XII|XIII)(\.\d+|\-\d+|\s\d+)?[A-Z]?$/i', $val)) $counts['kelas']++;
+            // Jawaban: A-E
+            elseif (preg_match('/^[A-E]$/', strtoupper($val))) $counts['jawaban']++;
+            // Timestamp: format tanggal
+            elseif (preg_match('/^\d{1,2}\/\d{1,2}\/\d{4}/', $val) || preg_match('/^\d{4}-\d{2}-\d{2}/', $val)) $counts['ts']++;
+            // Score: angka 1-3 digit (0-100)
+            elseif (preg_match('/^\d{1,3}$/', $val) && (int)$val <= 100) $counts['score']++;
+            // Nama: string panjang dengan huruf
+            elseif (preg_match('/^[A-Za-z\s\.\,\-\']+$/', $val) && strlen($val) > 5) $counts['nama']++;
+        }
+        
+        if ($total === 0) continue;
+        
+        $max = max($counts);
+        if ($max === 0) continue;
+        
+        $type = array_keys($counts, $max)[0];
+        
+        if ($type === 'nisn' && $map['nisn'] === null) $map['nisn'] = $c;
+        elseif ($type === 'kelas' && $map['kelas'] === null) $map['kelas'] = $c;
+        elseif ($type === 'jawaban') $map['jawaban'][] = $c;
+        elseif ($type === 'ts' && $map['timestamp'] === null) $map['timestamp'] = $c;
+        elseif ($type === 'score') $map['skip'][] = $c;
+        elseif ($type === 'nama' && $map['nama'] === null) $map['nama'] = $c;
+    }
+    
+    // Fallback untuk kolom yang tidak terdeteksi
+    if ($map['timestamp'] === null) $map['timestamp'] = 0;
+    if ($map['nama'] === null) {
+        for ($i = 0; $i < $colCount; $i++) {
+            if ($i !== $map['timestamp'] && $i !== $map['nisn'] && 
+                $i !== $map['kelas'] && !in_array($i, $map['jawaban']) && 
+                !in_array($i, $map['skip'])) {
+                $map['nama'] = $i;
+                break;
+            }
+        }
+    }
+    if ($map['nisn'] === null) $map['nisn'] = 2;
+    if ($map['kelas'] === null) $map['kelas'] = 3;
+    
+    return ['map' => $map, 'dataStart' => 0];
+}
+ function getResults($c,$eid){$r=[];$q=$c->query("SELECT * FROM results WHERE exam_id=$eid ORDER BY kelas,nama");while($x=$q->fetch_assoc())$r[]=$x;return $r;}
 function statsOf($res,$n,$kkm){$cnt=count($res);$sum=0;$t=0;$perQ=array_fill(0,$n,0);foreach($res as $r){$sum+=$r['skor'];if($r['skor']>=$kkm)$t++;if(strlen($r['detail'])==$n)for($i=0;$i<$n;$i++)if($r['detail'][$i]==='1')$perQ[$i]++;}return['n'=>$cnt,'rata'=>$cnt?$sum/$cnt:0,'kk'=>$cnt?$t/$cnt*100:0,'tuntas'=>$t,'perQ'=>$perQ];}
 function rhead($ex,$set,$judul){return '<div class="rhead">'.logoImg().'<div>'.$judul.'</div><div class="pink">'.e($set['sekolah']).'</div><div>TAHUN PELAJARAN '.e($set['ta']).'</div><div style="font-weight:normal;font-size:12px;margin-top:6px">Mapel: <b>'.e($ex['mapel']).'</b> | Kelas/Smt: <b>'.e($ex['kelas']).' / '.e($ex['smt']).'</b> | Tanggal: <b>'.e($ex['tanggal']).'</b> | Moda: <b>'.e($ex['mode']).'</b> | KKM: <b>'.$ex['kkm'].'</b></div></div>';}
 function tglIndo($d){if(!$d)return '.......................';$p=explode('-',$d);if(count($p)!==3)return e($d);$bl=['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];$m=(int)$p[1];return ($m>=1&&$m<=12)?((int)$p[2].' '.$bl[$m-1].' '.(int)$p[0]):e($d);}
@@ -35,7 +242,30 @@ function sigAnalisis($ex,$set){return '<table class="info" style="margin-top:26p
 function sigGuru($ex,$set){return '<table class="info" style="margin-top:26px"><tr><td style="width:50%"></td><td style="width:50%">Palembang, '.tglIndo($ex['tanggal']).'<br>Guru Mata Pelajaran,<br><br><br><br><b><u>'.e($ex['guru']?:'............................').'</u></b><br>NIP. '.e($ex['nip_guru']?:'-').'</td></tr></table>';}
 function makeUsername($c,$nama,$nip){$base=$nip!==''?$nip:preg_replace('/[^a-z0-9]/','',strtolower(trim($nama)));if($base==='')$base='guru';$u=$base;$i=1;while($c->query("SELECT id FROM users WHERE username='".$c->real_escape_string($u)."'")->fetch_assoc()){$u=$base.$i;$i++;}return $u;}
 function examOptions($c,$sel,$role,$uid){$h='';$w=($role==='admin')?'':' WHERE dibuat_oleh IN (0,'.$uid.')';$q=$c->query("SELECT * FROM exams".$w." ORDER BY id DESC");while($x=$q->fetch_assoc())$h.='<option value="'.$x['id'].'" '.($x['id']==$sel?'selected':'').'>'.e($x['mapel']).' — '.e($x['kelas']).' ('.e($x['mode']?:'belum ada data').')</option>';return $h?:'<option value="">-- belum ada ujian --</option>';}
-
+function httpPost_($url, $data) {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    return json_decode($response, true);
+}
+function httpGet_($url) {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    return json_decode($response, true);
+}
+function generatePin($length=4) {
+    $pin = '';
+    for($i=0; $i<$length; $i++) $pin .= random_int(0, 9);
+    return $pin;
+}
 /* seed admin default */
 $hasUsers=$conn->query("SHOW TABLES LIKE 'users'")->num_rows>0;
 if($hasUsers){$chk=$conn->query("SELECT id FROM users LIMIT 1");if($chk&&!$chk->fetch_assoc()){$h=password_hash('admin123',PASSWORD_DEFAULT);$conn->query("INSERT INTO users (username,pass_hash,pass_plain,nama,role) VALUES ('admin','".$conn->real_escape_string($h)."','admin123','Administrator','admin')");}}
@@ -65,24 +295,250 @@ if($_SERVER['REQUEST_METHOD']==='POST'){$act=$_POST['action']??'';
    else{$conn->query("INSERT INTO exams SET $setsql,dibuat_oleh=$uid");$examIdFinal=(int)$conn->insert_id;$msg='Ujian tersimpan. Lanjut ke menu 📥 IMPORT (CBT).';}
    if($examIdFinal>0){foreach(($_POST['ind']??[]) as $no=>$txt){$no=(int)$no;$txt=$conn->real_escape_string(strtolower(trim($txt)));if($txt===''){$conn->query("DELETE FROM indikator WHERE exam_id=$examIdFinal AND no_soal=$no");}else{$conn->query("REPLACE INTO indikator (exam_id,no_soal,indikator) VALUES ($examIdFinal,$no,'$txt')");}}}}
   elseif($act=='del_exam'){$eid=(int)$_POST['exam_id'];$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();if($ex&&($isAdmin||(int)$ex['dibuat_oleh']===$uid)){$conn->query("DELETE FROM results WHERE exam_id=$eid");$conn->query("DELETE FROM keterampilan WHERE exam_id=$eid");$conn->query("DELETE FROM indikator WHERE exam_id=$eid");$conn->query("DELETE FROM exams WHERE id=$eid");$msg='Ujian dihapus';}}
-  elseif($act=='import_cbt'){$eid=(int)$_POST['exam_id'];$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
-    if($ex&&($isAdmin||(int)$ex['dibuat_oleh']===0||(int)$ex['dibuat_oleh']===$uid)){$n=(int)$ex['jumlah_soal'];$kunci=str_split($ex['kunci']);
-    $lines=array_values(array_filter(array_map('trim',preg_split('/\r?\n/',$_POST['paste']??'')),'strlen'));
-    $rows=[];foreach($lines as $l)$rows[]=explode("\t",$l);$start=0;
-    if(isset($rows[0])&&(stripos($rows[0][0]??'','timestamp')!==false||stripos($rows[0][1]??'','nama')!==false))$start=1;
-    $parsed=[];for($i=$start;$i<count($rows);$i++){$r=$rows[$i];$nisn=trim($r[2]??'');$nama=trim($r[1]??'');if(!$nisn||$nisn==='.'||!$nama||$nama==='.')continue;$ans=[];foreach($r as $cc){$cc=strtoupper(trim($cc));if(preg_match('/^[A-E]$/',$cc))$ans[]=$cc;}$parsed[]=['ts'=>trim($r[0]??''),'nama'=>$nama,'nisn'=>$nisn,'kelas'=>trim($r[3]??''),'ans'=>array_slice($ans,0,$n),'seq'=>$i];}
-    $byN=[];foreach($parsed as $r){$t=strtotime($r['ts'])?:$r['seq'];if(!isset($byN[$r['nisn']])||$t>=$byN[$r['nisn']]['t']){$r['t']=$t;$byN[$r['nisn']]=$r;}}
-    $auto=isset($_POST['auto_add']);$valid=[];$dup=count($parsed)-count($byN);
-    foreach($byN as $r){$st=$conn->query("SELECT * FROM students WHERE nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();
-      if($st)$valid[]=['nisn'=>$st['nisn'],'nama'=>$st['nama'],'kelas'=>$st['kelas'],'ans'=>$r['ans']];
-      elseif($auto){$kk=normKelas($r['kelas']);$conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('".$conn->real_escape_string($r['nisn'])."','".$conn->real_escape_string($r['nama'])."','".$conn->real_escape_string($kk)."') ON DUPLICATE KEY UPDATE nama=VALUES(nama)");$valid[]=['nisn'=>$r['nisn'],'nama'=>$r['nama'],'kelas'=>$kk,'ans'=>$r['ans']];}
-      else $rejected[]=$r;}
-    usort($valid,function($a,$b){return strcmp($a['kelas'].$a['nama'],$b['kelas'].$b['nama']);});
-    $conn->query("DELETE FROM results WHERE exam_id=$eid");
-    foreach($valid as $v){$b=0;$det='';for($i=0;$i<$n;$i++){$ok=isset($v['ans'][$i])&&$v['ans'][$i]===$kunci[$i];$det.=$ok?'1':'0';if($ok)$b++;}$skor=(int)round($b*(float)$ex['skor_per_soal']);$status=$skor>=$ex['kkm']?'TUNTAS':'REMEDIAL';
-      $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) VALUES ($eid,'".$conn->real_escape_string($v['nisn'])."','".$conn->real_escape_string($v['nama'])."','".$conn->real_escape_string($v['kelas'])."','".$conn->real_escape_string(implode('',$v['ans']))."','$det',$b,$skor,'$status')");}
-    $conn->query("UPDATE exams SET mode='CBT' WHERE id=$eid");
-    $impInfo="Baris terbaca: ".count($parsed)." • Duplikat dibuang: $dup • Peserta valid: ".count($valid)." • Ditolak: ".count($rejected);}}
+  elseif($act=='buat_exam_online' && $isAdmin){
+    $eid=(int)$_POST['exam_id'];
+    $ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
+    if($ex && !empty($set['gas_url']) && !empty($set['gas_secret'])){
+        $code=substr(str_shuffle('ABCDEFGHJKLMNPQRSTUVWXYZ23456789'),0,6);
+        $pin=generatePin(4);
+        $token=generatePin(6);
+        $peserta=[];
+        $q=$conn->query("SELECT nisn,nama,kelas,tgl_lahir FROM students WHERE kelas='".$conn->real_escape_string($ex['kelas'])."' ORDER BY nama");
+        while($s=$q->fetch_assoc()) $peserta[]=$s;
+        
+        $payload=[
+            'secret'=>$set['gas_secret'],
+            'action'=>'create_exam',
+            'code'=>$code,
+            'exam_id'=>$eid,
+            'nama_ujian'=>$ex['mapel'].' - '.$ex['kelas'],
+            'mapel'=>$ex['mapel'],
+            'kelas'=>$ex['kelas'],
+            'tanggal'=>$ex['tanggal'],
+            'kkm'=>$ex['kkm'],
+            'skor_per_soal'=>$ex['skor_per_soal'],
+            'durasi'=>60,
+            'pin'=>$pin,
+            'token'=>$token,
+            'peserta'=>$peserta
+        ];
+        
+        $res=httpPost_($set['gas_url'], $payload);
+        if($res && isset($res['ok']) && $res['ok']){
+            $conn->query("UPDATE exams SET exam_code='".$conn->real_escape_string($code)."',pin_guru='".$conn->real_escape_string($pin)."',token='".$conn->real_escape_string($token)."',link_guru='".$conn->real_escape_string($res['link_guru'])."',link_siswa='".$conn->real_escape_string($res['link_siswa'])."',link_sheet='".$conn->real_escape_string($res['sheet_url'])."' WHERE id=$eid");
+            $msg="✅ Ujian Online berhasil dibuat! Code: <b>$code</b>, PIN Guru: <b>$pin</b>, Token: <b>$token</b>";
+        } else {
+            $msg="❌ Gagal membuat ujian: ".($res['err']??'Unknown error');
+        }
+    } else {
+        $msg="❌ URL GAS atau Secret belum diatur di Pengaturan Madrasah.";
+    }
+}
+elseif($act=='tarik_hasil'){
+    $eid=(int)$_POST['exam_id'];
+    $ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
+    if($ex && !empty($ex['exam_code']) && !empty($set['gas_url']) && !empty($set['gas_secret'])){
+        $url=$set['gas_url']."?action=results&code=".urlencode($ex['exam_code'])."&key=".urlencode($set['gas_secret']);
+        $res=httpGet_($url);
+        if($res && isset($res['ok']) && $res['ok']){
+            $kunci=str_split($ex['kunci']);
+            $n=$ex['jumlah_soal'];
+            $skor_per_soal=(float)$ex['skor_per_soal'];
+            $kkm=$ex['kkm'];
+            
+            foreach($res['hasil'] as $h){
+                $nisn=$conn->real_escape_string($h['nisn']);
+                $nama=$conn->real_escape_string($h['nama']);
+                $kelas=$conn->real_escape_string($h['kelas']);
+                $jawaban=$conn->real_escape_string($h['jawaban']);
+                
+                $arr=str_split($jawaban);
+                $b=0; $det='';
+                for($i=0;$i<$n;$i++){
+                    $ok=isset($arr[$i]) && strtoupper($arr[$i])===($kunci[$i]??'');
+                    $det.=$ok?'1':'0';
+                    if($ok)$b++;
+                }
+                $skor=(int)round($b*$skor_per_soal);
+                $status=$skor>=$kkm?'TUNTAS':'REMEDIAL';
+                
+                $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) VALUES ($eid,'$nisn','$nama','$kelas','$jawaban','$det',$b,$skor,'$status') ON DUPLICATE KEY UPDATE nama='$nama',kelas='$kelas',jawaban='$jawaban',detail='$det',benar=$b,skor=$skor,status='$status'");
+            }
+            $conn->query("UPDATE exams SET mode='CBT' WHERE id=$eid");
+            $msg="✅ Berhasil menarik ".count($res['hasil'])." data hasil ujian dari SPH-EXAM.";
+        } else {
+            $msg="❌ Gagal menarik hasil: ".($res['err']??'Unknown error');
+        }
+    } else {
+        $msg="❌ Ujian ini belum memiliki Kode Exam atau pengaturan GAS belum lengkap.";
+    }
+}
+ elseif($act=='import_cbt'){
+$eid=(int)$_POST['exam_id'];
+$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
+if($ex&&($isAdmin||(int)$ex['dibuat_oleh']===0||(int)$ex['dibuat_oleh']===$uid)){
+$n=(int)$ex['jumlah_soal'];
+$kunci=str_split($ex['kunci']);
+$kelasTarget=normKelas($ex['kelas']);
+$lines=array_values(array_filter(array_map('trim',explode("\n",str_replace("\r","",$_POST['paste']??''))),'strlen'));
+$rows=[];foreach($lines as $l)$rows[]=explode("\t",$l);
+$detect=detectImportColumns($rows,$n);
+$map=$detect['map'];
+$start=$detect['dataStart'];
+$colInfo="Timestamp=Kolom ".($map['timestamp']+1)." | Nama=Kolom ".($map['nama']+1)." | NISN=Kolom ".($map['nisn']+1)." | Kelas=Kolom ".($map['kelas']+1);
+if(!empty($map['skip']))$colInfo.=" | ⚠️ Skip (Score)=Kolom ".implode(',',array_map(function($x){return $x+1;},$map['skip']));
+$parsed=[];
+for($i=$start;$i<count($rows);$i++){
+$r=$rows[$i];
+$nisn=trim($r[$map['nisn']]??'');
+$nama=trim($r[$map['nama']]??'');
+$kelas=trim($r[$map['kelas']]??'');
+if(!$nisn||$nisn==='.'||!$nama||$nama==='.')continue;
+$ans=[];
+if(!empty($map['jawaban'])){foreach($map['jawaban'] as $jc){$cc=strtoupper(trim($r[$jc]??''));if(preg_match('/^[A-E]$/',$cc))$ans[]=$cc;}}
+else{foreach($r as $idx=>$cc){if(in_array($idx,$map['skip']))continue;$cc=strtoupper(trim($cc));if(preg_match('/^[A-E]$/',$cc))$ans[]=$cc;}}
+$parsed[]=['ts'=>trim($r[$map['timestamp']]??''),'nama'=>$nama,'nisn'=>$nisn,'kelas'=>$kelas,'ans'=>array_slice($ans,0,$n),'seq'=>$i];
+}
+$byN=[];
+foreach($parsed as $r){$t=strtotime($r['ts'])?:$r['seq'];if(!isset($byN[$r['nisn']])||$t>=$byN[$r['nisn']]['t']){$r['t']=$t;$byN[$r['nisn']]=$r;}}
+$auto=false; // Selalu false, tidak ada auto-add lagi
+$valid=[];
+$dup=count($parsed)-count($byN);
+$kelasMismatch=[];
+foreach($byN as $r){
+$kelasRow=normKelas($r['kelas']);
+if($kelasRow!==$kelasTarget){
+$kelasMismatch[]=$r;
+continue;
+}
+$st=$conn->query("SELECT * FROM students WHERE nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();
+if($st){
+$valid[]=['nisn'=>$st['nisn'],'nama'=>$st['nama'],'kelas'=>$st['kelas'],'ans'=>$r['ans']];
+}elseif($auto){
+$kk=normKelas($r['kelas']);
+$conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('".$conn->real_escape_string($r['nisn'])."','".$conn->real_escape_string($r['nama'])."','".$conn->real_escape_string($kk)."') ON DUPLICATE KEY UPDATE nama=VALUES(nama)");
+$valid[]=['nisn'=>$r['nisn'],'nama'=>$r['nama'],'kelas'=>$kk,'ans'=>$r['ans']];
+}else $rejected[]=$r;
+}
+if($st){
+  $valid[]=['nisn'=>$st['nisn'],'nama'=>$st['nama'],'kelas'=>$st['kelas'],'ans'=>$r['ans']];
+} else {
+  $rejected[]=$r; // Tolak jika NISN tidak ditemukan
+}
+usort($valid,function($a,$b){return strcmp($a['kelas'].$a['nama'],$b['kelas'].$b['nama']);});
+
+// 1. Hapus hasil lama
+$conn->query("DELETE FROM results WHERE exam_id=$eid");
+
+// 2. Insert siswa yang ikut ujian (dari file)
+foreach($valid as $v){
+$b=0;$det='';
+for($i=0;$i<$n;$i++){
+$ok=isset($v['ans'][$i])&&$v['ans'][$i]===$kunci[$i];
+$det.=$ok?'1':'0';
+if($ok)$b++;
+}
+$skor=(int)round($b*(float)$ex['skor_per_soal']);
+$status=$skor>=$ex['kkm']?'TUNTAS':'REMEDIAL';
+$conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) VALUES ($eid,'".$conn->real_escape_string($v['nisn'])."','".$conn->real_escape_string($v['nama'])."','".$conn->real_escape_string($v['kelas'])."','".$conn->real_escape_string(implode('',$v['ans']))."','$det',$b,$skor,'$status')");
+}
+
+// 3. BARU: Cari dan insert siswa yang TIDAK IKUT ujian (ada di database kelas ini, tapi tidak di file)
+$importedNisn = [];
+foreach($valid as $v) {
+    $importedNisn[] = "'".$conn->real_escape_string($v['nisn'])."'";
+}
+$det0 = str_repeat('0', $n); // Detail jawaban semua salah (0)
+
+if(!empty($importedNisn)){
+    $nisnList = implode(',', $importedNisn);
+    $qMissing = $conn->query("SELECT nisn, nama, kelas FROM students WHERE kelas='".$conn->real_escape_string($kelasTarget)."' AND nisn NOT IN ($nisnList)");
+    while($m = $qMissing->fetch_assoc()){
+        $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
+            VALUES ($eid,'".$conn->real_escape_string($m['nisn'])."','".$conn->real_escape_string($m['nama'])."','".$conn->real_escape_string($m['kelas'])."','','".$det0."',0,0,'REMEDIAL')");
+    }
+} else {
+    // Jika file kosong total, semua siswa di kelas ini dianggap tidak ikut
+    $qMissing = $conn->query("SELECT nisn, nama, kelas FROM students WHERE kelas='".$conn->real_escape_string($kelasTarget)."'");
+    while($m = $qMissing->fetch_assoc()){
+        $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
+            VALUES ($eid,'".$conn->real_escape_string($m['nisn'])."','".$conn->real_escape_string($m['nama'])."','".$conn->real_escape_string($m['kelas'])."','','".$det0."',0,0,'REMEDIAL')");
+    }
+}
+
+$conn->query("UPDATE exams SET mode='CBT' WHERE id=$eid");
+$impInfo="✔ <b>Deteksi Kolom:</b> $colInfo<br>🎯 <b>Filter Kelas:</b> $kelasTarget<br> Baris terbaca: ".count($parsed)." • Duplikat dibuang: $dup • Peserta valid: ".count($valid)." • Ditolak (NISN): ".count($rejected)." • Ditolak (Kelas beda): ".count($kelasMismatch);
+if(!empty($kelasMismatch)){
+$impInfo.='<div class="err" style="margin-top:10px"><b>⚠️ Data diabaikan karena kelas tidak sesuai (target: '.$kelasTarget.'):</b><ul style="margin:5px 0;padding-left:20px;font-size:12px">';
+foreach($kelasMismatch as $r){$impInfo.='<li><b>'.e($r['nama']).'</b> — NISN: '.e($r['nisn']).' — Kelas di file: <b>'.e($r['kelas']).'</b></li>';}
+$impInfo.='</ul></div>';
+}
+if($rejected){$impInfo.='<div class="err" style="margin-top:10px"><b>Tidak dapat dibaca (NISN tidak dikenal):</b><ul style="margin:5px 0;padding-left:20px;font-size:12px">';foreach($rejected as $r)$impInfo.='<li><b>'.e($r['nama']).'</b> (NISN: '.e($r['nisn']).', Kelas: '.e($r['kelas']).')</li>';$impInfo.='</ul></div>';}
+}
+}
+elseif($act=='process_verification'){
+    $eid=(int)$_POST['exam_id'];
+    $ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
+    
+    if($ex){
+        $n=(int)$ex['jumlah_soal'];
+        $kunci=str_split($ex['kunci']);
+        $verifications = $_POST['verify']??[];
+        $answers = $_POST['answers']??[];
+        
+        $processed=0;
+        $skipped=0;
+        $added=0;
+        
+        foreach($verifications as $idx=>$choice){
+            list($action,$nisn) = explode(':',$choice);
+            $ans = isset($answers[$idx]) ? str_split(base64_decode($answers[$idx])) : [];
+            
+            if($action=='use_existing'){
+                // Gunakan NISN yang sudah ada
+                $st=$conn->query("SELECT * FROM students WHERE nisn='".$conn->real_escape_string($nisn)."'")->fetch_assoc();
+                if($st){
+                    $b=0;$det='';
+                    for($i=0;$i<$n;$i++){
+                        $ok=isset($ans[$i])&&$ans[$i]===$kunci[$i];
+                        $det.=$ok?'1':'0';
+                        if($ok)$b++;
+                    }
+                    $skor=(int)round($b*(float)$ex['skor_per_soal']);
+                    $status=$skor>=$ex['kkm']?'TUNTAS':'REMEDIAL';
+                    
+                    $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
+                        VALUES ($eid,'".$conn->real_escape_string($st['nisn'])."','".$conn->real_escape_string($st['nama'])."','".$conn->real_escape_string($st['kelas'])."','".$conn->real_escape_string(implode('',$ans))."','$det',$b,$skor,'$status')");
+                    $processed++;
+                }
+            } elseif($action=='add_new'){
+                // Tambah siswa baru
+                $conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('".$conn->real_escape_string($nisn)."','".$conn->real_escape_string($_POST['imported_nama_'.$idx]??'')."','".$conn->real_escape_string($_POST['imported_kelas_'.$idx]??'')."') ON DUPLICATE KEY UPDATE nama=VALUES(nama)");
+                
+                $b=0;$det='';
+                for($i=0;$i<$n;$i++){
+                    $ok=isset($ans[$i])&&$ans[$i]===$kunci[$i];
+                    $det.=$ok?'1':'0';
+                    if($ok)$b++;
+                }
+                $skor=(int)round($b*(float)$ex['skor_per_soal']);
+                $status=$skor>=$ex['kkm']?'TUNTAS':'REMEDIAL';
+                
+                $conn->query("INSERT INTO results (exam_id,nisn,nama,kelas,jawaban,detail,benar,skor,status) 
+                    VALUES ($eid,'".$conn->real_escape_string($nisn)."','".$conn->real_escape_string($_POST['imported_nama_'.$idx]??'')."','".$conn->real_escape_string($_POST['imported_kelas_'.$idx]??'')."','".$conn->real_escape_string(implode('',$ans))."','$det',$b,$skor,'$status')");
+                $processed++;
+                $added++;
+            } else {
+                $skipped++;
+            }
+        }
+        
+        $conn->query("UPDATE exams SET mode='CBT' WHERE id=$eid");
+        $msg="✅ Verifikasi selesai! Diproses: <b>$processed</b>, Siswa baru ditambahkan: <b>$added</b>, Dilewati: <b>$skipped</b>";
+        header("Location: ?p=import&exam=$eid&msg=".urlencode($msg));
+        exit;
+    }
+}
   elseif($act=='save_manual'){$eid=(int)$_POST['exam_id'];$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();
     if($ex){$n=(int)$ex['jumlah_soal'];$kunci=str_split($ex['kunci']);$conn->query("DELETE FROM results WHERE exam_id=$eid");
     $q=$conn->query("SELECT * FROM students WHERE kelas='".$conn->real_escape_string($ex['kelas'])."' ORDER BY nama");
@@ -96,7 +552,11 @@ if($_SERVER['REQUEST_METHOD']==='POST'){$act=$_POST['action']??'';
     elseif($act=='save_tl'){$eid=(int)$_POST['exam_id'];foreach($_POST['tl'] as $nisn=>$v){$na=trim((string)($v['akhir']??''));$bentuk=$conn->real_escape_string($v['bentuk']??'');$naSql=$na!==''?(int)$na:'NULL';$conn->query("REPLACE INTO tindak_lanjut (exam_id,nisn,nilai_akhir,bentuk) VALUES ($eid,'".$conn->real_escape_string($nisn)."',$naSql,'$bentuk')");}$msg='Data remedial/pengayaan tersimpan.';}
   /* ===== KHUSUS ADMIN ===== */
   if($isAdmin){
-      if($act=='save_settings'){$conn->query("UPDATE settings SET sekolah='".$conn->real_escape_string($_POST['sekolah'])."',ta='".$conn->real_escape_string($_POST['ta'])."',smt='".$conn->real_escape_string($_POST['smt'])."',kkm=".(int)$_POST['kkm'].",kepala='".$conn->real_escape_string($_POST['kepala'])."',nip_kepala='".$conn->real_escape_string($_POST['nip_kepala'])."',waka='".$conn->real_escape_string($_POST['waka']??'')."',nip_waka='".$conn->real_escape_string($_POST['nip_waka']??'')."'");$set=$conn->query("SELECT * FROM settings LIMIT 1")->fetch_assoc();$msg='Pengaturan tersimpan.';}
+      if($act=='save_settings'){
+    $conn->query("UPDATE settings SET sekolah='".$conn->real_escape_string($_POST['sekolah'])."',ta='".$conn->real_escape_string($_POST['ta'])."',smt='".$conn->real_escape_string($_POST['smt'])."',kkm=".(int)$_POST['kkm'].",kepala='".$conn->real_escape_string($_POST['kepala'])."',nip_kepala='".$conn->real_escape_string($_POST['nip_kepala'])."',waka='".$conn->real_escape_string($_POST['waka']??'')."',nip_waka='".$conn->real_escape_string($_POST['nip_waka']??'')."',gas_url='".$conn->real_escape_string($_POST['gas_url']??'')."',gas_secret='".$conn->real_escape_string($_POST['gas_secret']??'SPH-MAN2PLG-2026')."'");
+    $set=$conn->query("SELECT * FROM settings LIMIT 1")->fetch_assoc();
+    $msg='Pengaturan tersimpan.';
+}
    elseif($act=='add_siswa'){$n=$conn->real_escape_string(trim($_POST['nisn']));$m=$conn->real_escape_string(trim($_POST['nama']));$k=$conn->real_escape_string(normKelas($_POST['kelas']));$conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('$n','$m','$k') ON DUPLICATE KEY UPDATE nama='$m',kelas='$k'");$msg='Siswa tersimpan.';}
       elseif($act=='import_siswa'){$c=0;$map=null;foreach(array_filter(array_map('trim',preg_split('/\r?\n/',$_POST['paste_siswa'])),'strlen') as $l){$r=explode("\t",$l);
      if($map===null){$low=array_map(function($x){return strtolower(trim($x));},$r);$join=implode(' ',$low);
@@ -107,7 +567,24 @@ if($_SERVER['REQUEST_METHOD']==='POST'){$act=$_POST['action']??'';
      $nisn=$conn->real_escape_string($nisn);$nama=$conn->real_escape_string($nama);$kelas=$conn->real_escape_string($kelas);
      if(!$nisn||!$nama||$nisn==='.')continue;$conn->query("INSERT INTO students (nisn,nama,kelas) VALUES ('$nisn','$nama','$kelas') ON DUPLICATE KEY UPDATE nama='$nama',kelas='$kelas'");$c++;}$msg="$c siswa terimport.";}
    elseif($act=='del_siswa'){$conn->query("DELETE FROM students WHERE nisn='".$conn->real_escape_string($_POST['nisn'])."'");}
-      elseif($act=='add_guru'||$act=='import_guru'){$cnt=0;
+elseif($act=='del_siswa_selected' && $isAdmin){
+  $nisnArr = $_POST['nisn'] ?? [];
+  if(empty($nisnArr) || !is_array($nisnArr)){
+    $msg = '⚠️ Tidak ada siswa yang dipilih.';
+  } else {
+    $escaped = array_map(function($n) use ($conn){ return "'".$conn->real_escape_string($n)."'"; }, $nisnArr);
+    $nisnList = implode(',', $escaped);
+    $count = count($nisnArr);
+    // Hapus dari tabel terkait dulu (hasil ujian, keterampilan, tindak lanjut)
+    $conn->query("DELETE FROM results WHERE nisn IN ($nisnList)");
+    $conn->query("DELETE FROM keterampilan WHERE nisn IN ($nisnList)");
+    $conn->query("DELETE FROM tindak_lanjut WHERE nisn IN ($nisnList)");
+    // Hapus siswa
+    $conn->query("DELETE FROM students WHERE nisn IN ($nisnList)");
+    $msg = "✅ Berhasil menghapus <b>$count</b> siswa terpilih.";
+  }
+}
+   elseif($act=='add_guru'||$act=='import_guru'){$cnt=0;
      if($act=='add_guru'){$rows=[[trim($_POST['nip']),trim($_POST['nama']),trim($_POST['mapel']??''),trim($_POST['username']??''),trim($_POST['password']??'')]];}
      else{$rows=[];$map=null;foreach(array_filter(array_map('trim',preg_split('/\r?\n/',$_POST['paste_guru'])),'strlen') as $l){$r=explode("\t",$l);
        if($map===null){$low=array_map(function($x){return strtolower(trim($x));},$r);$join=implode(' ',$low);
@@ -131,9 +608,36 @@ if($_SERVER['REQUEST_METHOD']==='POST'){$act=$_POST['action']??'';
 /* ================= TEMPLATE & BACKUP & CSV ================= */
 if($logged&&$isAdmin&&isset($_GET['tpl'])){$t=$_GET['tpl'];header('Content-Type:text/csv');header('Content-Disposition:attachment;filename="template_'.$t.'.csv"');echo "\xEF\xBB\xBF";if($t==='siswa')echo "NISN;NAMA;KELAS\n0089526958;zahara pebriyanti;XII.3\n";else echo "NIP;NAMA;MAPEL;USERNAME;PASSWORD\n198001012005011001;MARLAYLI S.Pd;Fiqih;;guru123\n";exit;}
 if($logged&&$isAdmin&&isset($_GET['backup'])){header('Content-Type:application/json');header('Content-Disposition:attachment;filename="BACKUP_SPH_'.date('Ymd_His').'.json"');$data=['settings'=>$set,'students'=>[],'users'=>[],'exams'=>[],'results'=>[]];$q=$conn->query("SELECT * FROM students");while($x=$q->fetch_assoc())$data['students'][]=$x;$q=$conn->query("SELECT id,username,pass_hash,pass_plain,nama,nip,mapel,role FROM users");while($x=$q->fetch_assoc())$data['users'][]=$x;$q=$conn->query("SELECT * FROM exams");while($x=$q->fetch_assoc())$data['exams'][]=$x;$q=$conn->query("SELECT * FROM results");while($x=$q->fetch_assoc())$data['results'][]=$x;echo json_encode($data);exit;}
-if($logged&&$p==='csv'){$eid=(int)($_GET['exam']??0);$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();header('Content-Type:text/csv');header('Content-Disposition:attachment;filename="SPH_'.$ex['mapel'].'_'.$ex['kelas'].'.csv"');$o=fopen('php://output','w');fputcsv($o,['No','NISN','Nama','Kelas','Benar','Nilai','Predikat','Status']);foreach(getResults($conn,$eid) as $i=>$r)fputcsv($o,[$i+1,$r['nisn'],$r['nama'],$r['kelas'],$r['benar'],$r['skor'],predikat($conn,$r['skor']),$r['status']]);exit;}
-  if($logged&&$p==='csvrdm'){$eid=(int)($_GET['exam']??0);$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();if($ex){header('Content-Type:text/csv');header('Content-Disposition:attachment;filename="RDM_'.$ex['mapel'].'_'.$ex['kelas'].'.csv"');echo "\xEF\xBB\xBF";$o=fopen('php://output','w');fputcsv($o,['NISN','Nama Siswa','Kelas','Semester','Mata Pelajaran','KKM','Nilai','Predikat','Deskripsi'],"\t");foreach(getResults($conn,$eid) as $r)fputcsv($o,[$r['nisn'],$r['nama'],$r['kelas'],$ex['smt'],$ex['mapel'],$ex['kkm'],$r['skor'],predikat($conn,$r['skor']),deskripsiOf($r,$ex,$conn)],"\t");fclose($o);exit;}}
-
+if($logged&&$p==='csv'){$eid=(int)($_GET['exam']??0);$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();header('Content-Type:text/csv; charset=utf-8');header('Content-Disposition:attachment;filename="SPH_'.$ex['mapel'].'_'.$ex['kelas'].'.csv"');echo "\xEF\xBB\xBF";$o=fopen('php://output','w');fputcsv($o,['No','NISN','Nama','Kelas','Benar','Nilai','Predikat','Status'],';');foreach(getResults($conn,$eid) as $i=>$r)fputcsv($o,[$i+1,excelText($r['nisn']),$r['nama'],excelText($r['kelas']),$r['benar'],$r['skor'],predikat($conn,$r['skor']),$r['status']],'');fclose($o);exit;}
+  if($logged&&$p==='csvrdm'){$eid=(int)($_GET['exam']??0);$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();if($ex){header('Content-Type:text/csv; charset=utf-8');header('Content-Disposition:attachment;filename="RDM_'.$ex['mapel'].'_'.$ex['kelas'].'.csv"');echo "\xEF\xBB\xBF";$o=fopen('php://output','w');fputcsv($o,['NISN','Nama Siswa','Kelas','Semester','Mata Pelajaran','KKM','Nilai','Predikat','Deskripsi'],"\t");foreach(getResults($conn,$eid) as $r)fputcsv($o,[excelText($r['nisn']),$r['nama'],excelText($r['kelas']),$ex['smt'],$ex['mapel'],$ex['kkm'],$r['skor'],predikat($conn,$r['skor']),deskripsiOf($r,$ex,$conn)],"\t");fclose($o);exit;}}
+// Export data siswa
+if($logged && $isAdmin && isset($_GET['export_siswa'])){
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="DATA_SISWA_'.date('Ymd_His').'.csv"');
+    
+    $output = fopen('php://output', 'w');
+    // BOM UTF-8 agar Excel baca karakter Indonesia dengan benar
+    fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
+    
+    // Header
+    fputcsv($output, ['No', 'NISN', 'Nama Siswa', 'Kelas', 'Tgl Lahir'], ';');
+    
+    // Ambil data sesuai filter aktif
+    $cari = trim($_GET['cari'] ?? '');
+    $fkelas = trim($_GET['kelas'] ?? '');
+    $where = [];
+    if($cari !== '') $where[] = "CONCAT(nisn,nama,kelas) LIKE '%".$conn->real_escape_string($cari)."%'";
+    if($fkelas !== '') $where[] = "kelas='".$conn->real_escape_string($fkelas)."'";
+    $wsql = $where ? 'WHERE '.implode(' AND ', $where) : '';
+    
+    $q = $conn->query("SELECT nisn,nama,kelas,tgl_lahir FROM students $wsql ORDER BY kelas,nama");
+    $no = 1;
+    while($s = $q->fetch_assoc()){
+       fputcsv($output, [$no++, excelText($s['nisn']), $s['nama'], excelText($s['kelas']), $s['tgl_lahir'] ?? ''], ';');
+    }
+    fclose($output);
+    exit;
+}
 /* ================= LOAD UJIAN TERPILIH ================= */
 $examSel=null;$eid=(int)($_GET['exam']??$_POST['exam_id']??0);
 if($logged&&$eid){$ex=$conn->query("SELECT * FROM exams WHERE id=$eid")->fetch_assoc();if($ex&&($isAdmin||in_array((int)($ex['dibuat_oleh']??0),[0,$uid])))$examSel=$ex;}
@@ -200,7 +704,11 @@ foreach($NAV as $nv){echo '<a href="?p='.$nv[0].'"'.($p===$nv[0]?' class="active
  <div class="row"><div><label>Madrasah</label><input name="sekolah" value="<?=e($set['sekolah'])?>"></div><div><label>Tahun Pelajaran</label><input name="ta" value="<?=e($set['ta'])?>"></div><div><label>Semester</label><select name="smt"><option <?=$set['smt']=='Ganjil'?'selected':''?>>Ganjil</option><option <?=$set['smt']=='Genap'?'selected':''?>>Genap</option></select></div><div><label>KKM Default</label><input type="number" name="kkm" value="<?=e($set['kkm'])?>"></div></div>
  <div class="row"><div><label>Kepala Madrasah</label><input name="kepala" value="<?=e($set['kepala'])?>"></div><div><label>NIP Kepala</label><input name="nip_kepala" value="<?=e($set['nip_kepala'])?>"></div></div>
    <div class="row"><div><label>Waka Bid. Kurikulum (dropdown data guru)</label><select name="waka" id="wakaSel"><?php $gW=[];$q=$conn->query("SELECT nama,nip FROM users WHERE role='guru' ORDER BY nama");while($g=$q->fetch_assoc())$gW[]=$g;$wF=false;foreach($gW as $g){if($g['nama']===$set['waka'])$wF=true;echo '<option '.($g['nama']===$set['waka']?'selected':'').'>'.e($g['nama']).'</option>';}if($set['waka']&&!$wF)echo '<option selected>'.e($set['waka']).'</option>';?></select></div><div><label>NIP Waka (otomatis)</label><input name="nip_waka" id="nipWakaIn" readonly value="<?=e($set['nip_waka']??'')?>"></div></div>
-  <button class="btn">💾 Simpan</button></form>
+ <div class="row">
+    <div><label>URL Google Apps Script (GAS)</label><input name="gas_url" value="<?=e($set['gas_url']??'')?>" placeholder="https://script.google.com/macros/s/.../exec"></div>
+    <div><label>Secret GAS</label><input name="gas_secret" value="<?=e($set['gas_secret']??'SPH-MAN2PLG-2026')?>"></div>
+</div>
+   <button class="btn">💾 Simpan</button></form>
  <script>
  var W_NIP=<?=json_encode(array_column($gW??[],'nip','nama'))?>;
  function updWaka(){var w=document.getElementById('wakaSel').value;document.getElementById('nipWakaIn').value=W_NIP[w]||document.getElementById('nipWakaIn').value||'';}
@@ -226,22 +734,119 @@ foreach($NAV as $nv){echo '<a href="?p='.$nv[0].'"'.($p===$nv[0]?' class="active
  $rowsS=[];$q=$conn->query("SELECT * FROM students $wsql");while($s=$q->fetch_assoc())$rowsS[]=$s;
  usort($rowsS,function($a,$b){$r=kelasRank($a['kelas'])-kelasRank($b['kelas']);return $r!==0?$r:strcmp($a['nama'],$b['nama']);});
 ?>
+
  <form method="get" id="fSiswa" class="no-print" style="margin-bottom:8px"><input type="hidden" name="p" value="master">
   <div class="row">
-   <div><label>🔍 Cari (nama / NISN)</label><input name="cari" id="fCari" value="<?=e($cari)?>" placeholder="ketik untuk mencari..."></div>
-   <div><label>🏫 Filter Kelas</label><select name="kelas" id="fKelas"><option value="">— Semua Kelas —</option><?php $qk=$conn->query("SELECT DISTINCT kelas FROM students WHERE kelas<>'' ORDER BY kelas");while($k=$qk->fetch_assoc())echo '<option '.($k['kelas']===$fkelas?'selected':'').'>'.e($k['kelas']).'</option>';?></select></div>
-   <div style="flex:0"><label>&nbsp;</label><a class="btn gray" href="?p=master">↺ Reset</a></div>
-  </div>
+<div><label> Cari (nama / NISN)</label><input name="cari" id="fCari" value="<?=e($cari)?>" placeholder="ketik untuk mencari..."></div>
+<div><label> Filter Kelas</label><select name="kelas" id="fKelas"><option value="">— Semua Kelas —</option><?php $qk=$conn->query("SELECT DISTINCT kelas FROM students WHERE kelas<>'' ORDER BY kelas");while($k=$qk->fetch_assoc())echo '<option '.($k['kelas']===$fkelas?'selected':'').'>'.e($k['kelas']).'</option>';?></select></div>
+<div style="flex:0"><label>&nbsp;</label>
+<a class="btn gray" href="?p=master">↺ Reset</a>
+<?php if($isAdmin && count($rowsS)>0): ?>
+<a class="btn green" href="?export_siswa=1&p=master&cari=<?=urlencode($cari)?>&kelas=<?=urlencode($fkelas)?>" style="margin-left:4px">⬇ Export CSV</a>
+<?php endif; ?>
+</div>
+</div>
  </form>
  <div class="ok" style="margin:6px 0">Menampilkan <b><?=count($rowsS)?></b> dari <b><?=$totAll?></b> siswa</div>
- <div style="overflow-x:auto;max-height:480px;overflow-y:auto"><table class="tbl">
-  <thead><tr><th style="width:46px">No</th><th style="width:130px">NISN</th><th>Nama Siswa</th><th style="width:90px">Kelas</th><?=$isAdmin?'<th class="no-print" style="width:70px">Aksi</th>':'<th class="no-print" style="width:100px">Status</th>'?></tr></thead>
-  <tbody>
-  <?php $i=0;foreach($rowsS as $s){$i++;echo '<tr><td class="c">'.$i.'</td><td><code>'.e($s['nisn']).'</code></td><td><b>'.e($s['nama']).'</b></td><td class="c"><span class="badge">'.e($s['kelas']).'</span></td>'.($isAdmin?'<td class="no-print"><form method="post" style="margin:0" onsubmit="return confirm(\'Hapus siswa '.e($s['nama']).'?\')"><input type="hidden" name="action" value="del_siswa"><input type="hidden" name="nisn" value="'.e($s['nisn']).'"><button class="btn red" style="margin:0;padding:3px 9px" title="Hapus">✖</button></form></td>':'<td class="no-print c">👁 baca</td>').'</tr>';}
-  if(!$rowsS)echo '<tr><td colspan="5" class="c" style="padding:14px">Tidak ada data siswa yang cocok.</td></tr>';
-  ?>
-  </tbody></table></div>
+
+<?php if($isAdmin && !empty($rowsS)): ?>
+<!-- Toolbar Hapus Massal -->
+<div class="no-print" style="margin:10px 0; padding:10px; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+  <label style="font-weight:bold; margin:0; cursor:pointer">
+    <input type="checkbox" id="checkAllHeader" style="width:auto; margin-right:6px" onchange="toggleAll(this)"> Pilih Semua
+  </label>
+  <span id="countSelected" style="color:#856404; font-size:13px; font-weight:600">0 siswa dipilih</span>
+  <button type="button" class="btn red" id="btnBulkDelete" disabled onclick="bulkDelete()" style="margin:0">
+    🗑 Hapus Siswa Terpilih
+  </button>
 </div>
+<?php endif; ?>
+
+<div style="overflow-x:auto; max-height:480px; overflow-y:auto">
+<table class="tbl">
+<thead>
+<tr>
+  <?php if($isAdmin): ?><th class="no-print" style="width:30px"><input type="checkbox" id="checkAllHeader2" style="width:auto" onchange="toggleAll(this)"></th><?php endif; ?>
+  <th style="width:40px">No</th>
+  <th style="width:110px">NISN</th>
+  <th>Nama</th>
+  <th style="width:80px">Kelas</th>
+  <th style="width:100px">Tgl Lahir</th>
+  <?php if($isAdmin): ?><th class="no-print" style="width:60px">Aksi</th><?php endif; ?>
+</tr>
+</thead>
+<tbody>
+<?php $i=0; foreach($rowsS as $s){ $i++; ?>
+<tr>
+  <?php if($isAdmin): ?><td class="c no-print"><input type="checkbox" class="rowCheck" value="<?=e($s['nisn'])?>" style="width:auto" onchange="updateCount()"></td><?php endif; ?>
+  <td class="c"><?=$i?></td>
+  <td><code><?=e($s['nisn'])?></code></td>
+  <td><b><?=e($s['nama'])?></b></td>
+  <td class="c"><span class="badge"><?=e($s['kelas'])?></span></td>
+  <td class="c"><?=e($s['tgl_lahir']??'-')?></td>
+  <?php if($isAdmin): ?>
+  <td class="no-print">
+    <form method="post" style="margin:0" onsubmit="return confirm('Hapus <?=e($s['nama'])?>?')">
+      <input type="hidden" name="action" value="del_siswa">
+      <input type="hidden" name="nisn" value="<?=e($s['nisn'])?>">
+      <button class="btn red" style="margin:0;padding:3px 9px" title="Hapus">✖</button>
+    </form>
+  </td>
+  <?php else: ?>
+  <td class="no-print c">👁 baca</td>
+  <?php endif; ?>
+</tr>
+<?php } ?>
+<?php if(!$rowsS) echo '<tr><td colspan="'.($isAdmin?7:6).'" class="c" style="padding:14px">Tidak ada data siswa yang cocok.</td></tr>'; ?>
+</tbody>
+</table>
+</div>
+
+<?php if($isAdmin && !empty($rowsS)): ?>
+<script>
+function toggleAll(el){
+  document.querySelectorAll('.rowCheck').forEach(cb => cb.checked = el.checked);
+  // Sinkronkan kedua checkbox "Pilih Semua" (toolbar & header tabel)
+  document.getElementById('checkAllHeader').checked = el.checked;
+  document.getElementById('checkAllHeader2').checked = el.checked;
+  updateCount();
+}
+function updateCount(){
+  const checks = document.querySelectorAll('.rowCheck');
+  const checked = document.querySelectorAll('.rowCheck:checked');
+  const count = checked.length;
+  const total = checks.length;
+  document.getElementById('countSelected').textContent = count + ' siswa dipilih';
+  document.getElementById('btnBulkDelete').disabled = count === 0;
+  // Update state checkbox "Pilih Semua"
+  const allChecked = (count === total && total > 0);
+  document.getElementById('checkAllHeader').checked = allChecked;
+  document.getElementById('checkAllHeader2').checked = allChecked;
+}
+function bulkDelete(){
+  const checked = document.querySelectorAll('.rowCheck:checked');
+  if(checked.length === 0) return;
+  if(!confirm('⚠️ Yakin ingin menghapus ' + checked.length + ' siswa terpilih?\n\nData tidak dapat dikembalikan!')) return;
+  const form = document.createElement('form');
+  form.method = 'post';
+  form.action = '?p=master';
+  const actionInput = document.createElement('input');
+  actionInput.type = 'hidden';
+  actionInput.name = 'action';
+  actionInput.value = 'del_siswa_selected';
+  form.appendChild(actionInput);
+  checked.forEach(cb => {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'nisn[]';
+    input.value = cb.value;
+    form.appendChild(input);
+  });
+  document.body.appendChild(form);
+  form.submit();
+}
+</script>
+<?php endif; ?>
 <script>
 document.getElementById('fKelas').onchange=function(){this.form.submit();};
 document.getElementById('fCari').addEventListener('input',function(){clearTimeout(window._tCari);window._tCari=setTimeout(function(){document.getElementById('fSiswa').submit();},600);});
@@ -344,7 +949,20 @@ $i=0;foreach($rowsK as $k){$i++;echo '<tr><td class="c">'.$i.'</td><td class="c"
  </table></div>
  <button class="btn green"><?= $editEx?'💾 SIMPAN PERUBAHAN':'💾 SIMPAN UJIAN'?></button>
  <?php if($editEx){?><a class="btn gray" href="?p=setup">✖ Batalkan Edit</a><?php }?></form></div>
-<div class="card"><h2>Ujian Tersimpan</h2><table><tr><th>Mapel</th><th>Kelas</th><th>Guru Mapel</th><th>Tanggal</th><th>Soal</th><th>KKM</th><th>Moda</th><th>Peserta</th><th>Aksi</th></tr>
+<div class="card"><h2>Ujian Tersimpan</h2><table><tr><th>Mapel</th><th>Kelas</th><th>Guru Mapel</th><th>Tanggal</th><th>Soal</th><th>KKM</th><th>Moda</th><th>Peserta</th><th>SPH-EXAM</th><td class="c">
+    <?php if(!empty($x['exam_code'])): ?>
+        <span class="badge" style="background:#9575cd; font-size:10px;"><?=e($x['exam_code'])?></span><br>
+        <small style="font-size:10px">PIN: <?=e($x['pin_guru'])?></small><br>
+        <a href="<?=e($x['link_guru'])?>" target="_blank" class="btn" style="margin:2px;padding:2px 6px;font-size:10px">Panel Guru</a>
+        <a href="<?=e($x['link_siswa'])?>" target="_blank" class="btn green" style="margin:2px;padding:2px 6px;font-size:10px">Link Siswa</a>
+    <?php else: ?>
+        <form method="post" style="margin:0;display:inline">
+            <input type="hidden" name="action" value="buat_exam_online">
+            <input type="hidden" name="exam_id" value="<?=$x['id']?>">
+            <button class="btn" style="margin:0;padding:3px 8px" onclick="return confirm('Buat ujian online di Google Sheets? Data siswa di kelas ini akan dikirim.')">🌐 Buat</button>
+        </form>
+    <?php endif; ?>
+</td><th>Aksi</th></tr>
 <?php $w=$isAdmin?'':' WHERE dibuat_oleh IN (0,'.$uid.')';$q=$conn->query("SELECT e.*,(SELECT COUNT(*) FROM results r WHERE r.exam_id=e.id) pes FROM exams e".$w." ORDER BY id DESC");while($x=$q->fetch_assoc()){echo '<tr><td>'.e($x['mapel']).'</td><td class="c">'.e($x['kelas']).'</td><td>'.e($x['guru']).'</td><td class="c">'.e($x['tanggal']).'</td><td class="c">'.$x['jumlah_soal'].'</td><td class="c">'.$x['kkm'].'</td><td class="c">'.e($x['mode']?:'-').'</td><td class="c">'.$x['pes'].'</td><td><a class="btn" style="margin:0;padding:3px 8px" href="?p=setup&edit='.$x['id'].'">✏</a> <form method="post" style="margin:0;display:inline"><input type="hidden" name="action" value="del_exam"><input type="hidden" name="exam_id" value="'.$x['id'].'"><button class="btn red" style="margin:0;padding:3px 8px">✖</button></form></td></tr>';}?></table></div>
 <script>
 var KELAS_WALI=<?=json_encode($kelasWali)?>;
@@ -361,16 +979,29 @@ function buatInd(){var old={};document.querySelectorAll('#ii input').forEach(fun
 <?php if($p=='import'){ ?>
 <div class="card"><h2>IMPORT HASIL GOOGLE FORM (CBT)</h2>
 <div class="note">Cara 1: upload langsung file <b>.xlsx / .csv</b> hasil export Google Form/Sheets. Cara 2: paste copy spreadsheet (header: time Stamp | NAMA | NISN | KELAS | jawaban a–e). NISN tak dikenal tidak dibaca (atau centang auto-add). Duplikat NISN diambil submission terakhir.</div>
+<?php if($examSel && !empty($examSel['exam_code'])): ?>
+<div class="ok" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center">
+    <div>
+        <b>🌐 Ujian Online Aktif:</b> Code: <b><?=e($examSel['exam_code'])?></b> | 
+        <a href="<?=e($examSel['link_guru'])?>" target="_blank" style="color:#1a3e72">Panel Guru</a> | 
+        <a href="<?=e($examSel['link_siswa'])?>" target="_blank" style="color:#1a3e72">Link Siswa</a>
+    </div>
+    <form method="post" style="margin:0">
+        <input type="hidden" name="action" value="tarik_hasil">
+        <input type="hidden" name="exam_id" value="<?=$examSel['id']?>">
+        <button class="btn green" style="margin:0" onclick="return confirm('Tarik hasil ujian dari SPH-EXAM? Data lama akan diperbarui.')">🔄 Tarik Hasil</button>
+    </form>
+</div>
+<?php endif; ?>
 <form method="post"><input type="hidden" name="action" value="import_cbt">
- <label>Pilih Ujian</label><select name="exam_id"><?php echo examOptions($conn,$eid,$role,$uid);?></select>
- <label>Upload File Hasil Google Form (.xlsx/.csv)</label>
- <input type="file" id="fileHasil" accept=".xlsx,.xls,.csv">
- <label>Atau Paste Data di Sini</label><textarea name="paste" id="pasteNilai" rows="10"><?=e($_POST['paste']??'')?></textarea>
- <label style="font-weight:normal"><input type="checkbox" name="auto_add" style="width:auto" checked> NISN tak dikenal otomatis ditambah ke Master Siswa</label>
- <br><button class="btn green">⚙ IMPORT & KOREKSI OTOMATIS</button> <a class="btn gray" href="?p=import">🧹 BERSIH</a></form>
- <?php if($impInfo)echo '<div class="ok">✔ '.e($impInfo).'</div>';
- if($rejected){echo '<div class="err"><b>Tidak dapat dibaca:</b> ';foreach($rejected as $r)echo e($r['nama']).' ('.e($r['nisn']).'), ';echo '</div>';}
- if($examSel){$res=getResults($conn,$examSel['id']);if($res){echo '<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Kelas</th><th>Benar</th><th>Nilai</th><th>Status</th></tr>';foreach($res as $i=>$r)echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.e($r['kelas']).'</td><td class="c">'.$r['benar'].'/'.$examSel['jumlah_soal'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.e($r['status']).'</td></tr>';echo '</table>';}}?>
+<label>Pilih Ujian</label><select name="exam_id"><?php echo examOptions($conn,$eid,$role,$uid);?></select>
+<label>Upload File Hasil Google Form (.xlsx/.csv)</label>
+<input type="file" id="fileHasil" accept=".xlsx,.xls,.csv">
+<label>Atau Paste Data di Sini</label><textarea name="paste" id="pasteNilai" rows="10"><?=e($_POST['paste']??'')?></textarea>
+
+<br><button class="btn green">⚙ IMPORT & KOREKSI OTOMATIS</button> <a class="btn gray" href="?p=import">🧹 BERSIH</a></form>
+<?php if($impInfo)echo '<div class="ok">'.$impInfo.'</div>'; ?>
+<?php if($examSel){$res=getResults($conn,$examSel['id']);if($res){echo '<table class="tbl" style="margin-top:15px"><thead><tr><th>No</th><th>NISN</th><th>Nama</th><th>Kelas</th><th>Benar</th><th>Nilai</th><th>Status</th></tr></thead><tbody>';foreach($res as $i=>$r)echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.e($r['kelas']).'</td><td class="c">'.$r['benar'].'/'.$examSel['jumlah_soal'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.e($r['status']).'</td></tr>';echo '</tbody></table>';}}?>
 </div>
 <script>document.getElementById('fileHasil').onchange=function(ev){var f=ev.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(e2){var wb=XLSX.read(e2.target.result,{type:'array'});var ws=wb.Sheets[wb.SheetNames[0]];document.getElementById('pasteNilai').value=XLSX.utils.sheet_to_csv(ws,{FS:'\t'});};r.readAsArrayBuffer(f);};</script>
 <?php } ?>
@@ -382,9 +1013,9 @@ function buatInd(){var old={};document.querySelectorAll('#ii input').forEach(fun
 <table><tr><th>No</th><th>NISN</th><th>Nama</th><?php if($mode=='huruf'){for($j=1;$j<=$n;$j++)echo '<th class="c">'.$j.'</th>';}else{echo '<th>Nilai</th>';} echo '</tr>';
 $q=$conn->query("SELECT * FROM students WHERE kelas='".$conn->real_escape_string($examSel['kelas'])."' ORDER BY nama");$i=0;
 while($s=$q->fetch_assoc()){$i++;echo '<tr><td class="c">'.$i.'</td><td>'.e($s['nisn']).'</td><td>'.e($s['nama']).'</td>';
- if($mode=='huruf'){for($j=0;$j<$n;$j++)echo '<td class="c"><input name="huruf['.e($s['nisn']).']['.$j.']" maxlength="1" style="width:30px;text-align:center;padding:3px"></td>';}
- else{echo '<td><input type="number" name="nilai['.e($s['nisn']).']" style="width:80px"></td>';}
- echo '</tr>';}?></table>
+if($mode=='huruf'){for($j=0;$j<$n;$j++)echo '<td class="c"><input name="huruf['.e($s['nisn']).']['.$j.']" maxlength="1" style="width:30px;text-align:center;padding:3px"></td>';}
+else{echo '<td><input type="number" name="nilai['.e($s['nisn']).']" style="width:80px"></td>';}
+echo '</tr>';}?></table>
 <button class="btn green">💾 SIMPAN & KOREKSI</button></form></div>
 <?php } elseif($p=='manual'){ ?><div class="card"><h2>Input Manual (NON CBT)</h2><form method="get"><input type="hidden" name="p" value="manual"><label>Pilih Ujian</label><select name="exam"><?php echo examOptions($conn,0,$role,$uid);?></select><button class="btn">Buka</button></form></div><?php } ?>
 
@@ -394,59 +1025,65 @@ while($s=$q->fetch_assoc()){$i++;echo '<tr><td class="c">'.$i.'</td><td>'.e($s['
 $has=count(getResults($conn,$examSel['id']))>0;
 echo '<div class="grid" style="margin-top:14px">';foreach($LAP as $L){$ok=$has&&($L[2]===''||$L[2]===$examSel['mode']);echo '<a class="gbtn '.$L[3].($ok?'':' off').'" href="?p=gen&exam='.$examSel['id'].'&t='.$L[0].'&m='.urlencode($L[2]).'">'.$L[1].($L[2]?' ('.$L[2].')':'').'</a>';}echo '</div>';}?></div>
 
-<?php if($examSel){$res=getResults($conn,$examSel['id']);$st=statsOf($res,$examSel['jumlah_soal'],$examSel['kkm']);$t=$_GET['t']??'';$m=$_GET['m']??$examSel['mode'];
-  if($t=='ket'&&$res){ ?>
- <div class="no-print" style="background:#fff;border:1px solid #2e7d32;border-radius:8px;padding:14px;margin-bottom:14px"><h2>INPUT NILAI KETERAMPILAN — <?=e($examSel['mapel'])?> <?=e($examSel['kelas'])?></h2>
- <div class="note">Isikan skor <b>1–4</b> untuk 5 aspek (jumlah skor maksimal 20). <b>Nilai = Jumlah Skor ÷ 20 × 100</b>.</div>
- <form method="post"><input type="hidden" name="action" value="save_ket"><input type="hidden" name="exam_id" value="<?=$examSel['id']?>">
- <table><tr><th>Nama</th><th>Aspek 1</th><th>Aspek 2</th><th>Aspek 3</th><th>Aspek 4</th><th>Aspek 5</th></tr><?php foreach($res as $r){$kt=$conn->query("SELECT * FROM keterampilan WHERE exam_id=".$examSel['id']." AND nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();echo '<tr><td>'.e($r['nama']).'</td>';for($x=1;$x<=5;$x++)echo '<td class="c"><input type="number" min="1" max="4" name="kt['.e($r['nisn']).']['.($x-1).']" value="'.e($kt['p'.$x]??'').'" style="width:60px"></td>';echo '</tr>';}?></table>
- <button class="btn green">💾 SIMPAN & PERBARUI LAPORAN</button></form></div>
- <?php
-  echo kop($set);
-  echo '<div class="rhead"><div>FORM PENILAIAN PRAKTIK/PROYEK/PORTOFOLIO</div><div style="font-weight:normal;font-size:12px">PENILAIAN HARIAN TAHUN AJARAN '.e($set['ta']).' — MATA PELAJARAN '.e(strtoupper($examSel['mapel'])).' — KELAS '.e($examSel['kelas']).' SEMESTER '.e(strtoupper($examSel['smt'])).'</div></div>';
-  echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Nama Guru</td><td>: <b>'.e($examSel['guru']).'</b></td></tr><tr><td>Kelas / Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>NIP</td><td>: <b>'.e($examSel['nip_guru']).'</b></td></tr><tr><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td><td>Tahun Pelajaran</td><td>: <b>'.e($set['ta']).'</b></td></tr></table>';
-  echo '<table><tr><th>No</th><th>Nama Siswa</th><th>A1</th><th>A2</th><th>A3</th><th>A4</th><th>A5</th><th>Jumlah Skor (maks 20)</th><th>Nilai</th><th>Predikat</th></tr>';
-  foreach($res as $i=>$r){$kt=$conn->query("SELECT * FROM keterampilan WHERE exam_id=".$examSel['id']." AND nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();$tot=0;$any=false;for($x=1;$x<=5;$x++){$v=$kt['p'.$x]??null;$tot+=$v?:0;if($v!==null)$any=true;}$nilai=$any?round($tot/20*100):null;
-   echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td>';for($x=1;$x<=5;$x++)echo '<td class="c">'.e($kt['p'.$x]??'').'</td>';echo '<td class="c">'.($any?$tot:'').'</td><td class="c"><b>'.($nilai!==null?$nilai:'').'</b></td><td class="c">'.($nilai!==null?predikat($conn,$nilai):'').'</td></tr>';}
-  echo '</table><h3>Rentang Predikat</h3>'.rentangTable($conn);
-  echo '<table class="info" style="margin-top:26px"><tr><td style="width:50%"></td><td style="width:50%">Palembang, '.tglIndo($examSel['tanggal']).'<br>Guru Mata Pelajaran,<br><br><br><br><b><u>'.e($examSel['guru']?:'............................').'</u></b><br>NIP. '.e($examSel['nip_guru']?:'-').'</td></tr></table>';
- } elseif($t&&$t!=='ket'&&$res){ ?>
- <div class="card"><div class="no-print" style="margin-bottom:10px"><button class="btn" onclick="window.print()">🖨 CETAK/PDF</button> <a class="btn green" href="?p=csv&exam=<?=$examSel['id']?>">⬇ CSV</a></div>
- <?php
- if($t=='analisis'){
-  echo '<div class="rhead">'.logoImg().'<div>LEMBAR ANALISIS HASIL PENILAIAN HARIAN BERSAMA ('.e($m).')</div><div class="pink">'.e($set['sekolah']).'</div><div>TAHUN PELAJARAN '.e($set['ta']).'</div></div>';
-  echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Hari/Tanggal</td><td>: <b>'.e($examSel['tanggal']).'</b></td></tr>';
-  echo '<tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Nama Guru/NIP</td><td>: <b>'.e($examSel['guru']).' / '.e($examSel['nip_guru']).'</b></td></tr>';
-  echo '<tr><td>Jumlah Peserta</td><td>: <b>'.$st['n'].' orang</b></td><td>Nama Wali Kelas/NIP</td><td>: <b>'.e($examSel['wali']).' / '.e($examSel['nip_wali']).'</b></td></tr>';
-  echo '<tr><td>Jumlah Soal</td><td>: <b>'.$examSel['jumlah_soal'].' butir</b></td><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td></tr>';
-  echo '<tr><td>Bentuk Soal</td><td>: <b>'.e($examSel['bentuk']).'</b></td><td>Skor Soal</td><td>: <b>'.$examSel['skor_per_soal'].'</b></td></tr></table>';
-  echo '<table><tr><th rowspan="2">No</th><th rowspan="2">NISN</th><th rowspan="2">Nama Siswa</th><th colspan="'.$examSel['jumlah_soal'].'">Nomor Soal / Skor Soal</th><th colspan="3">Hasil</th><th colspan="2">Ketuntasan</th></tr><tr>';
-  for($i=1;$i<=$examSel['jumlah_soal'];$i++)echo '<th class="c">'.$i.'</th>';
-  echo '<th class="c">Benar</th><th class="c">Salah</th><th class="c">Nilai</th><th class="c">Ya</th><th class="c">Tidak</th></tr>';
-  foreach($res as $i=>$r){
-    echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td>';
-    $hasDet=strlen((string)$r['detail'])==$examSel['jumlah_soal'];
-    for($j=0;$j<$examSel['jumlah_soal'];$j++){echo '<td class="c">'.(($hasDet&&$r['detail'][$j]==='1')?$examSel['skor_per_soal']:'').'</td>';}
-    echo '<td class="c">'.$r['benar'].'</td><td class="c">'.($examSel['jumlah_soal']-$r['benar']).'</td><td class="c"><b>'.$r['skor'].'</b></td>';
-    $tun=$r['skor']>=$examSel['kkm'];
-    echo '<td class="c">'.($tun?'✓':'').'</td><td class="c">'.($tun?'':'✓').'</td></tr>';
-  }
-  echo '<tr><td colspan="3"><b>Jumlah Benar per Soal</b></td>';
-  foreach($st['perQ'] as $c)echo '<td class="c"><b>'.$c.'</b></td>';
-  echo '<td colspan="5"></td></tr><tr><td colspan="3"><b>Daya Serap per Soal</b></td>';
-  foreach($st['perQ'] as $c)echo '<td class="c">'.($st['n']?round($c/$st['n']*100):0).'%</td>';
-  echo '<td colspan="5"></td></tr></table>';
+<?php if($examSel){
+$res=getResults($conn,$examSel['id']);
+$st=statsOf($res,$examSel['jumlah_soal'],$examSel['kkm']);
+$t=$_GET['t']??'';
+$m=$_GET['m']??$examSel['mode'];
+
+if($t=='ket'&&$res){ ?>
+<div class="no-print" style="background:#fff;border:1px solid #2e7d32;border-radius:8px;padding:14px;margin-bottom:14px"><h2>INPUT NILAI KETERAMPILAN — <?=e($examSel['mapel'])?> <?=e($examSel['kelas'])?></h2>
+<div class="note">Isikan skor <b>1–4</b> untuk 5 aspek (jumlah skor maksimal 20). <b>Nilai = Jumlah Skor ÷ 20 × 100</b>.</div>
+<form method="post"><input type="hidden" name="action" value="save_ket"><input type="hidden" name="exam_id" value="<?=$examSel['id']?>">
+<table><tr><th>Nama</th><th>Aspek 1</th><th>Aspek 2</th><th>Aspek 3</th><th>Aspek 4</th><th>Aspek 5</th></tr><?php foreach($res as $r){$kt=$conn->query("SELECT * FROM keterampilan WHERE exam_id=".$examSel['id']." AND nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();echo '<tr><td>'.e($r['nama']).'</td>';for($x=1;$x<=5;$x++)echo '<td class="c"><input type="number" min="1" max="4" name="kt['.e($r['nisn']).']['.($x-1).']" value="'.e($kt['p'.$x]??'').'" style="width:60px"></td>';echo '</tr>';}?></table>
+<button class="btn green">💾 SIMPAN & PERBARUI LAPORAN</button></form></div>
+<?php
+echo kop($set);
+echo '<div class="rhead"><div>FORM PENILAIAN PRAKTIK/PROYEK/PORTOFOLIO</div><div style="font-weight:normal;font-size:12px">PENILAIAN HARIAN TAHUN AJARAN '.e($set['ta']).' — MATA PELAJARAN '.e(strtoupper($examSel['mapel'])).' — KELAS '.e($examSel['kelas']).' SEMESTER '.e(strtoupper($examSel['smt'])).'</div></div>';
+echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Nama Guru</td><td>: <b>'.e($examSel['guru']).'</b></td></tr><tr><td>Kelas / Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>NIP</td><td>: <b>'.e($examSel['nip_guru']).'</b></td></tr><tr><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td><td>Tahun Pelajaran</td><td>: <b>'.e($set['ta']).'</b></td></tr></table>';
+echo '<table><tr><th>No</th><th>Nama Siswa</th><th>A1</th><th>A2</th><th>A3</th><th>A4</th><th>A5</th><th>Jumlah Skor (maks 20)</th><th>Nilai</th><th>Predikat</th></tr>';
+foreach($res as $i=>$r){$kt=$conn->query("SELECT * FROM keterampilan WHERE exam_id=".$examSel['id']." AND nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();$tot=0;$any=false;for($x=1;$x<=5;$x++){$v=$kt['p'.$x]??null;$tot+=$v?:0;if($v!==null)$any=true;}$nilai=$any?round($tot/20*100):null;
+echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td>';for($x=1;$x<=5;$x++)echo '<td class="c">'.e($kt['p'.$x]??'').'</td>';echo '<td class="c">'.($any?$tot:'').'</td><td class="c"><b>'.($nilai!==null?$nilai:'').'</b></td><td class="c">'.($nilai!==null?predikat($conn,$nilai):'').'</td></tr>';}
+echo '</table><h3>Rentang Predikat</h3>'.rentangTable($conn);
+echo '<table class="info" style="margin-top:26px"><tr><td style="width:50%"></td><td style="width:50%">Palembang, '.tglIndo($examSel['tanggal']).'<br>Guru Mata Pelajaran,<br><br><br><br><b><u>'.e($examSel['guru']?:'............................').'</u></b><br>NIP. '.e($examSel['nip_guru']?:'-').'</td></tr></table>';
+
+} elseif($t&&$t!=='ket'&&$res){ ?>
+<div class="card"><div class="no-print" style="margin-bottom:10px"><button class="btn" onclick="window.print()">🖨 CETAK/PDF</button> <a class="btn green" href="?p=csv&exam=<?=$examSel['id']?>">⬇ CSV</a></div>
+<?php
+if($t=='analisis'){
+echo '<div class="rhead">'.logoImg().'<div>LEMBAR ANALISIS HASIL PENILAIAN HARIAN BERSAMA ('.e($m).')</div><div class="pink">'.e($set['sekolah']).'</div><div>TAHUN PELAJARAN '.e($set['ta']).'</div></div>';
+echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Hari/Tanggal</td><td>: <b>'.e($examSel['tanggal']).'</b></td></tr>';
+echo '<tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Nama Guru/NIP</td><td>: <b>'.e($examSel['guru']).' / '.e($examSel['nip_guru']).'</b></td></tr>';
+echo '<tr><td>Jumlah Peserta</td><td>: <b>'.$st['n'].' orang</b></td><td>Nama Wali Kelas/NIP</td><td>: <b>'.e($examSel['wali']).' / '.e($examSel['nip_wali']).'</b></td></tr>';
+echo '<tr><td>Jumlah Soal</td><td>: <b>'.$examSel['jumlah_soal'].' butir</b></td><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td></tr>';
+echo '<tr><td>Bentuk Soal</td><td>: <b>'.e($examSel['bentuk']).'</b></td><td>Skor Soal</td><td>: <b>'.$examSel['skor_per_soal'].'</b></td></tr></table>';
+echo '<table><tr><th rowspan="2">No</th><th rowspan="2">NISN</th><th rowspan="2">Nama Siswa</th><th colspan="'.$examSel['jumlah_soal'].'">Nomor Soal / Skor Soal</th><th colspan="3">Hasil</th><th colspan="2">Ketuntasan</th></tr><tr>';
+for($i=1;$i<=$examSel['jumlah_soal'];$i++)echo '<th class="c">'.$i.'</th>';
+echo '<th class="c">Benar</th><th class="c">Salah</th><th class="c">Nilai</th><th class="c">Ya</th><th class="c">Tidak</th></tr>';
+foreach($res as $i=>$r){
+echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td>';
+$hasDet=strlen((string)$r['detail'])==$examSel['jumlah_soal'];
+for($j=0;$j<$examSel['jumlah_soal'];$j++){echo '<td class="c">'.(($hasDet&&$r['detail'][$j]==='1')?$examSel['skor_per_soal']:'').'</td>';}
+echo '<td class="c">'.$r['benar'].'</td><td class="c">'.($examSel['jumlah_soal']-$r['benar']).'</td><td class="c"><b>'.$r['skor'].'</b></td>';
+$tun=$r['skor']>=$examSel['kkm'];
+echo '<td class="c">'.($tun?'✓':'').'</td><td class="c">'.($tun?'':'✓').'</td></tr>';
+}
+echo '<tr><td colspan="3"><b>Jumlah Benar per Soal</b></td>';
+foreach($st['perQ'] as $c)echo '<td class="c"><b>'.$c.'</b></td>';
+echo '<td colspan="5"></td></tr><tr><td colspan="3"><b>Daya Serap per Soal</b></td>';
+foreach($st['perQ'] as $c)echo '<td class="c">'.($st['n']?round($c/$st['n']*100):0).'%</td>';
+echo '<td colspan="5"></td></tr></table>';
 echo '<table class="info" style="margin-top:8px"><tr><td>Rata-rata Kelas</td><td>: <b>'.number_format($st['rata'],1).'</b></td><td>Ketuntasan Klasikal</td><td>: <b>'.number_format($st['kk'],1).'%</b> ('.$st['tuntas'].'/'.$st['n'].')</td></tr></table>';
 $N=$st['n'];$maxS=0;$minS=100;foreach($res as $r){$maxS=max($maxS,$r['skor']);$minS=min($minS,$r['skor']);}
 $sorted=$res;usort($sorted,function($a,$b){return $b['skor']-$a['skor'];});
 $g=max(1,(int)round($N*0.27));$up=array_slice($sorted,0,$g);$low=array_slice($sorted,max(0,$N-$g));
 $dpArr=[];$tkArr=[];$krArr=[];
 for($i=0;$i<$examSel['jumlah_soal'];$i++){$bu=0;$bl=0;
- foreach($up as $r){if(strlen((string)$r['detail'])==$examSel['jumlah_soal']&&$r['detail'][$i]==='1')$bu++;}
- foreach($low as $r){if(strlen((string)$r['detail'])==$examSel['jumlah_soal']&&$r['detail'][$i]==='1')$bl++;}
- $dp=count($low)?($bu-$bl)/count($low):0;$dpArr[]=$dp;
- $p=$N?$st['perQ'][$i]/$N:0;$tkArr[]=$p;
- $krArr[]=$dp<0.2?'Dibuang':(($p>=0.3&&$p<=0.7)?'Diterima':'Direvisi');}
+foreach($up as $r){if(strlen((string)$r['detail'])==$examSel['jumlah_soal']&&$r['detail'][$i]==='1')$bu++;}
+foreach($low as $r){if(strlen((string)$r['detail'])==$examSel['jumlah_soal']&&$r['detail'][$i]==='1')$bl++;}
+$dp=count($low)?($bu-$bl)/count($low):0;$dpArr[]=$dp;
+$p=$N?$st['perQ'][$i]/$N:0;$tkArr[]=$p;
+$krArr[]=$dp<0.2?'Dibuang':(($p>=0.3&&$p<=0.7)?'Diterima':'Direvisi');}
 echo '<h3>KESIMPULAN</h3>';
 echo '<table><tr><th style="width:280px">KESIMPULAN</th>';for($i=1;$i<=$examSel['jumlah_soal'];$i++)echo '<th class="c">'.$i.'</th>';echo '</tr>';
 echo '<tr><td>Jumlah Siswa yang Mencapai Skor Maksimal</td>';foreach($st['perQ'] as $c)echo '<td class="c">'.$c.'</td>';echo '</tr>';
@@ -460,104 +1097,131 @@ echo '<tr><td>Kriteria Soal</td>';foreach($krArr as $kr)echo '<td class="c">'.$k
 echo '</table>';
 echo sigAnalisis($examSel,$set);
 }
- elseif($t=='nilai'){
-  echo '<div class="rhead">'.logoImg().'<div>DAFTAR NILAI PENILAIAN HARIAN BERSAMA ('.e($m).')</div><div class="pink">'.e($set['sekolah']).'</div><div>MATA PELAJARAN '.e(strtoupper($examSel['mapel'])).'</div><div>TAHUN PELAJARAN '.e($set['ta']).' — KELAS '.e($examSel['kelas']).' SEMESTER '.e(strtoupper($examSel['smt'])).'</div></div>';
-  echo '<table><tr><th>No.</th><th>NISN</th><th>Nama</th><th>KKM</th><th>Nilai</th><th>Predikat</th><th>Deskripsi</th></tr>';
-  foreach($res as $i=>$r){echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.$examSel['kkm'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.predikat($conn,$r['skor']).'</td><td>'.e(deskripsiOf($r,$examSel,$conn)).'</td></tr>';}
-  echo '</table>';
-  echo '<h3>Tabel Predikat (KKM '.$examSel['kkm'].')</h3>'.rentangTable($conn);
+elseif($act=='del_siswa_massal' && $isAdmin){
+  $filter_cari = trim($_POST['filter_cari']??'');
+  $filter_kelas = trim($_POST['filter_kelas']??'');
+  
+  $where = [];
+  if($filter_cari !== '') $where[] = "CONCAT(nisn,nama,kelas) LIKE '%".$conn->real_escape_string($filter_cari)."%'";
+  if($filter_kelas !== '') $where[] = "kelas='".$conn->real_escape_string($filter_kelas)."'";
+  
+  $wsql = $where ? 'WHERE '.implode(' AND ', $where) : '';
+  
+  // Hitung jumlah yang akan dihapus
+  $count = $conn->query("SELECT COUNT(*) as c FROM students $wsql")->fetch_assoc()['c'];
+  
+  // Hapus dari tabel results terlebih dahulu (foreign key)
+  $conn->query("DELETE r FROM results r INNER JOIN students s ON r.nisn=s.nisn $wsql");
+  
+  // Hapus dari tabel keterampilan
+  $conn->query("DELETE k FROM keterampilan k INNER JOIN students s ON k.nisn=s.nisn $wsql");
+  
+  // Hapus dari tabel tindak_lanjut
+  $conn->query("DELETE t FROM tindak_lanjut t INNER JOIN students s ON t.nisn=s.nisn $wsql");
+  
+  // Hapus siswa
+  $conn->query("DELETE FROM students $wsql");
+  
+  $msg = "✅ Berhasil menghapus <b>$count</b> siswa sesuai filter.";
+}
+elseif($t=='nilai'){
+echo '<div class="rhead">'.logoImg().'<div>DAFTAR NILAI PENILAIAN HARIAN BERSAMA ('.e($m).')</div><div class="pink">'.e($set['sekolah']).'</div><div>MATA PELAJARAN '.e(strtoupper($examSel['mapel'])).'</div><div>TAHUN PELAJARAN '.e($set['ta']).' — KELAS '.e($examSel['kelas']).' SEMESTER '.e(strtoupper($examSel['smt'])).'</div></div>';
+echo '<table><tr><th>No.</th><th>NISN</th><th>Nama</th><th>KKM</th><th>Nilai</th><th>Predikat</th><th>Deskripsi</th></tr>';
+foreach($res as $i=>$r){echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.$examSel['kkm'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.predikat($conn,$r['skor']).'</td><td>'.e(deskripsiOf($r,$examSel,$conn)).'</td></tr>';}
+echo '</table>';
+echo '<h3>Tabel Predikat (KKM '.$examSel['kkm'].')</h3>'.rentangTable($conn);
 echo sigGuru($examSel,$set);
 }
-  elseif($t=='kesimpulan'){
-  $maxS=0;$minS=100;$dist=[];$q=$conn->query("SELECT * FROM kkm_range ORDER BY min DESC");while($x=$q->fetch_assoc()){$x['jml']=0;$dist[]=$x;}
-  foreach($res as $r){$maxS=max($maxS,$r['skor']);$minS=min($minS,$r['skor']);foreach($dist as &$dd){if($r['skor']>=(int)$dd['min']&&$r['skor']<=(int)$dd['max'])$dd['jml']++;}}unset($dd);
-  $soalPerlu=[];for($i=0;$i<$examSel['jumlah_soal'];$i++){$pc=$st['n']?$st['perQ'][$i]/$st['n']*100:0;if($pc<75)$soalPerlu[]=$i+1;}
-  $siswaPerlu=[];foreach($res as $i=>$r){if($r['skor']<$examSel['kkm'])$siswaPerlu[]=$i+1;}
-  echo kop($set);
-  echo '<div class="rhead"><div>PENILAIAN HARIAN TAHUN AJARAN '.e($set['ta']).'</div><div>KESIMPULAN HASIL ANALISIS ('.e($m).')</div></div>';
-  echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Jumlah Soal</td><td>: <b>'.$examSel['jumlah_soal'].' butir</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Bentuk Soal</td><td>: <b>'.e($examSel['bentuk']).'</b></td></tr><tr><td>Tahun Pelajaran</td><td>: <b>'.e($set['ta']).'</b></td><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td></tr></table>';
-  echo '<div style="display:flex;gap:16px;flex-wrap:wrap"><div style="flex:2;min-width:300px"><table class="info"><tr><td colspan="2"><b>1. Ketuntasan Belajar</b></td></tr><tr><td colspan="2">a. Perorangan</td></tr><tr><td style="padding-left:18px">Jumlah siswa seluruhnya</td><td>: <b>'.$st['n'].' orang</b></td></tr><tr><td style="padding-left:18px">Jumlah siswa yang telah tuntas</td><td>: <b>'.$st['tuntas'].' orang</b></td></tr><tr><td style="padding-left:18px">Jumlah siswa yang belum tuntas</td><td>: <b>'.($st['n']-$st['tuntas']).' orang</b></td></tr><tr><td style="padding-left:18px">Nilai tertinggi</td><td>: <b>'.$maxS.'</b></td></tr><tr><td style="padding-left:18px">Nilai terendah</td><td>: <b>'.$minS.'</b></td></tr><tr><td colspan="2">b. Klasikal</td></tr><tr><td style="padding-left:18px">Persentase siswa yang telah tuntas</td><td>: <b>'.number_format($st['kk'],1).'%</b></td></tr><tr><td style="padding-left:18px">Rata-rata hasil penilaian harian</td><td>: <b>'.number_format($st['rata'],1).'</b></td></tr></table></div>';
-  echo '<div style="flex:1;min-width:260px"><table><tr><th>No</th><th>Rentang</th><th>Jumlah</th><th>Keterangan</th></tr>';$no=1;foreach($dist as $dd){echo '<tr><td class="c">'.$no++.'</td><td class="c">'.$dd['min'].' — '.$dd['max'].'</td><td class="c">'.$dd['jml'].'</td><td>'.e(ucfirst($dd['keterangan'])).'</td></tr>';}echo '</table></div></div>';
-  echo '<table class="info" style="margin-top:8px"><tr><td colspan="2"><b>2. Kesimpulan</b></td></tr><tr><td style="width:26px">a.</td><td>Perlu perbaikan secara klasikal untuk soal nomor: <b>'.($soalPerlu?implode(', ',$soalPerlu):'-').'</b></td></tr><tr><td>b.</td><td>Perlu perbaikan secara individual untuk siswa bernomor: <b>'.($siswaPerlu?implode(', ',$siswaPerlu):'-').'</b></td></tr></table>';
-  echo '<table class="info" style="margin-top:8px"><tr><td colspan="2"><b>Keterangan</b></td></tr><tr><td style="width:26px">A.</td><td>Daya serap perorangan: seorang siswa disebut telah tuntas belajar bila mencapai nilai ≥ KKM ('.$examSel['kkm'].') dengan rumus: Nilai = Jumlah Benar × Skor per Soal.</td></tr><tr><td>B.</td><td>Daya serap klasikal: suatu kelas telah tuntas belajar bila ≥ 75% siswa mencapai daya serap yang dipersyaratkan, dengan rumus: (Siswa Tuntas ÷ Jumlah Siswa) × 100% = '.number_format($st['kk'],1).'%.</td></tr></table>';
-  echo sigResmi($examSel,$set);
- }
-  elseif($t=='target'){
-  $ind=[];$q=$conn->query("SELECT no_soal,indikator FROM indikator WHERE exam_id=".$examSel['id']." ORDER BY no_soal");while($x=$q->fetch_assoc())$ind[(int)$x['no_soal']]=$x['indikator'];
-  echo kop($set);
-  echo '<div class="rhead"><div>PENILAIAN HARIAN TAHUN AJARAN '.e($set['ta']).'</div><div>PENCAPAIAN TARGET KURIKULUM DAN DAYA SERAP SISWA ('.e($m).')</div></div>';
-  echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Jumlah Soal</td><td>: <b>'.$examSel['jumlah_soal'].' butir</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Bentuk Soal</td><td>: <b>'.e($examSel['bentuk']).'</b></td></tr><tr><td>Jumlah Siswa</td><td>: <b>'.$st['n'].' orang</b></td><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td></tr></table>';
-  echo '<table><tr><th style="width:80px">Nomor Soal</th><th>Materi / Kompetensi Dasar / Indikator</th><th class="c">Target Tuntas</th><th class="c">Belum Tuntas</th><th class="c">Daya Serap</th></tr>';
-  for($i=0;$i<$examSel['jumlah_soal'];$i++){$c=$st['perQ'][$i];$pc=$st['n']?round($c/$st['n']*100):0;echo '<tr><td class="c">'.($i+1).'</td><td>'.e($ind[$i+1]??'-').'</td><td class="c">'.$c.' orang</td><td class="c">'.($st['n']-$c).' orang</td><td class="c">'.$pc.'%</td></tr>';}
-  echo '</table>';
-  echo sigResmi($examSel,$set);
- }
-  elseif($t=='remedial'){
-  $rem=array_values(array_filter($res,function($r)use($examSel){return $r['skor']<$examSel['kkm'];}));
-  $tl=[];$q=$conn->query("SELECT * FROM tindak_lanjut WHERE exam_id=".$examSel['id']);while($x=$q->fetch_assoc())$tl[$x['nisn']]=$x;
-  $indText=[];$q=$conn->query("SELECT indikator FROM indikator WHERE exam_id=".$examSel['id']." ORDER BY no_soal");while($x=$q->fetch_assoc()){$v=strtolower(trim($x['indikator']));if($v!==''&&!in_array($v,$indText))$indText[]=$v;}
-  $kd=$indText?implode('; ',$indText).'.':'(indikator belum diisi pada lembar koreksi)';
-  $BR=['Pemberian bimbingan secara individu','Pemberian bimbingan secara kelompok','Pemberian pembelajaran ulang','Pemanfaatan tutor sebaya'];
-  echo '<div class="no-print" style="background:#fff;border:1px solid #2e7d32;border-radius:8px;padding:14px;margin-bottom:14px"><h2>INPUT PROGRAM REMEDIAL — '.e($examSel['mapel']).' '.e($examSel['kelas']).'</h2>';
-  echo '<div class="note">Nilai Awal otomatis dari hasil koreksi. Isi <b>Nilai Akhir</b> setelah remedial dan pilih <b>Bentuk Remedial</b>. Keterangan berubah otomatis: <b>Tuntas</b> bila Nilai Akhir ≥ KKM '.$examSel['kkm'].'.</div>';
-  echo '<form method="post"><input type="hidden" name="action" value="save_tl"><input type="hidden" name="exam_id" value="'.$examSel['id'].'">';
-  echo '<table><tr><th>No</th><th>Nama Siswa</th><th>Nilai Awal</th><th>Nilai Akhir</th><th>Bentuk Remedial</th><th>Keterangan</th></tr>';
-  foreach($rem as $i=>$r){$x=$tl[$r['nisn']]??null;$na=$x['nilai_akhir']??null;$ket=$na!==null?(($na>=$examSel['kkm'])?'Tuntas':'Belum Tuntas'):'Belum Tuntas';
-   echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td><td class="c">'.$r['skor'].'</td>';
-   echo '<td class="c"><input type="number" name="tl['.e($r['nisn']).'][akhir]" value="'.e($na).'" style="width:70px" oninput="ketHitung(this,\'ket_'.e($r['nisn']).'\','.$examSel['kkm'].')"></td>';
-   echo '<td><select name="tl['.e($r['nisn']).'][bentuk]"><option value="">-- pilih --</option>';foreach($BR as $b)echo '<option '.(($x['bentuk']??'')===$b?'selected':'').'>'.e($b).'</option>';echo '</select></td>';
-   echo '<td class="c" id="ket_'.e($r['nisn']).'">'.$ket.'</td></tr>';}
-  if(!$rem)echo '<tr><td colspan="6">Tidak ada peserta remedial 🎉</td></tr>';
-  echo '</table><button class="btn green">💾 SIMPAN & PERBARUI LAPORAN</button></form></div>';
-  echo '<script>function ketHitung(el,id,kkm){var v=el.value===""?null:+el.value;document.getElementById(id).textContent=(v!==null&&v>=kkm)?"Tuntas":"Belum Tuntas";}</script>';
-  echo '<div class="rhead">'.logoImg().'<div>PROGRAM REMEDIAL HASIL PENILAIAN HARIAN BERSAMA</div><div class="pink">'.e($set['sekolah']).'</div><div>TAHUN PELAJARAN '.e($set['ta']).'</div></div>';
-  echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Hari/Tanggal</td><td>: <b>'.e($examSel['tanggal']).'</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Guru Mapel</td><td>: <b>'.e($examSel['guru']).'</b></td></tr></table>';
-  echo '<table><tr><th rowspan="2">No</th><th rowspan="2">Nama Siswa</th><th rowspan="2">Kompetensi Dasar / Indikator</th><th colspan="'.$examSel['jumlah_soal'].'">Indikator / Nomor Soal yang Belum Tuntas</th><th rowspan="2">KKM</th><th rowspan="2">Bentuk Remedial</th><th colspan="2">Hasil</th><th rowspan="2">Keterangan</th></tr><tr>';
-  for($i=1;$i<=$examSel['jumlah_soal'];$i++)echo '<th class="c">'.$i.'</th>';
-  echo '<th class="c">Awal</th><th class="c">Akhir</th></tr>';
-  if($rem){foreach($rem as $i=>$r){$x=$tl[$r['nisn']]??null;$na=$x['nilai_akhir']??null;$ket=$na!==null?(($na>=$examSel['kkm'])?'Tuntas':'Belum Tuntas'):'Belum Tuntas';
-    echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td>';
-    if($i===0)echo '<td rowspan="'.count($rem).'">'.e($kd).'</td>';
-    $hasDet=strlen((string)$r['detail'])==$examSel['jumlah_soal'];
-    for($j=0;$j<$examSel['jumlah_soal'];$j++)echo '<td class="c">'.(($hasDet&&$r['detail'][$j]==='0')?'✗':'').'</td>';
-    echo '<td class="c">'.$examSel['kkm'].'</td><td>'.e($x['bentuk']??'').'</td><td class="c">'.$r['skor'].'</td><td class="c">'.($na!==null?$na:'').'</td><td class="c">'.$ket.'</td></tr>';}}
-  else echo '<tr><td colspan="'.(8+$examSel['jumlah_soal']).'">Tidak ada peserta remedial 🎉</td></tr>';
-  echo '</table>'.sigBlock($examSel,$set);
- }
-  elseif($t=='pengayaan'){
-  $pg=array_values(array_filter($res,function($r)use($examSel){return $r['skor']>=$examSel['kkm'];}));
-  $tl=[];$q=$conn->query("SELECT * FROM tindak_lanjut WHERE exam_id=".$examSel['id']);while($x=$q->fetch_assoc())$tl[$x['nisn']]=$x;
-  $indText=[];$q=$conn->query("SELECT indikator FROM indikator WHERE exam_id=".$examSel['id']." ORDER BY no_soal");while($x=$q->fetch_assoc()){$v=strtolower(trim($x['indikator']));if($v!==''&&!in_array($v,$indText))$indText[]=$v;}
-  $kd=$indText?implode('; ',$indText).'.':'(indikator belum diisi pada lembar koreksi)';
-  $BP=['Belajar Mandiri','Belajar Kelompok','Pengayaan'];
-  echo '<div class="no-print" style="background:#fff;border:1px solid #2e7d32;border-radius:8px;padding:14px;margin-bottom:14px"><h2>INPUT PROGRAM PENGAYAAN — '.e($examSel['mapel']).' '.e($examSel['kelas']).'</h2>';
-  echo '<div class="note">Nilai Awal otomatis dari hasil koreksi. Isi <b>Nilai Akhir</b> dan pilih <b>Bentuk Pengayaan</b>.</div>';
-  echo '<form method="post"><input type="hidden" name="action" value="save_tl"><input type="hidden" name="exam_id" value="'.$examSel['id'].'">';
-  echo '<table><tr><th>No</th><th>Nama Siswa</th><th>Nilai Awal</th><th>Nilai Akhir</th><th>Bentuk Pengayaan</th></tr>';
-  foreach($pg as $i=>$r){$x=$tl[$r['nisn']]??null;
-   echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td><td class="c">'.$r['skor'].'</td>';
-   echo '<td class="c"><input type="number" name="tl['.e($r['nisn']).'][akhir]" value="'.e($x['nilai_akhir']??'').'" style="width:70px"></td>';
-   echo '<td><select name="tl['.e($r['nisn']).'][bentuk]"><option value="">-- pilih --</option>';foreach($BP as $b)echo '<option '.(($x['bentuk']??'')===$b?'selected':'').'>'.e($b).'</option>';echo '</select></td></tr>';}
-  if(!$pg)echo '<tr><td colspan="5">Tidak ada peserta pengayaan.</td></tr>';
-  echo '</table><button class="btn green">💾 SIMPAN & PERBARUI LAPORAN</button></form></div>';
-  echo '<div class="rhead">'.logoImg().'<div>PROGRAM PENGAYAAN HASIL PENILAIAN HARIAN BERSAMA</div><div class="pink">'.e($set['sekolah']).'</div><div>TAHUN PELAJARAN '.e($set['ta']).'</div></div>';
-  echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Hari/Tanggal</td><td>: <b>'.e($examSel['tanggal']).'</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Guru Mapel</td><td>: <b>'.e($examSel['guru']).'</b></td></tr></table>';
-  echo '<table><tr><th>No</th><th>Nama Siswa</th><th>Kompetensi Dasar / Indikator</th><th>KKM</th><th>Nilai Awal</th><th>Nilai Akhir</th><th>Bentuk Pengayaan</th></tr>';
-  if($pg){foreach($pg as $i=>$r){$x=$tl[$r['nisn']]??null;
-    echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td>';
-    if($i===0)echo '<td rowspan="'.count($pg).'">'.e($kd).'</td>';
-    echo '<td class="c">'.$examSel['kkm'].'</td><td class="c">'.$r['skor'].'</td><td class="c">'.e($x['nilai_akhir']??'').'</td><td>'.e($x['bentuk']??'').'</td></tr>';}}
-  else echo '<tr><td colspan="7">Tidak ada peserta pengayaan.</td></tr>';
-  echo '</table>'.sigBlock($examSel,$set);
- }
-  elseif($t=='penyerahan'){echo rhead($examSel,$set,'LEMBAR PENYERAHAN NILAI / TANDA TERIMA ('.e($m).')');echo '<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Nilai PH</th><th>Keterampilan</th><th>Rata-rata</th><th>Predikat</th><th>Tanggal</th><th>Tanda Tangan</th></tr>';foreach($res as $i=>$r){$kt=$conn->query("SELECT * FROM keterampilan WHERE exam_id=".$examSel['id']." AND nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();$vals=array_filter([$kt['p1']??null,$kt['p2']??null,$kt['p3']??null,$kt['p4']??null,$kt['p5']??null],function($v){return $v!==null;});$avg=$vals?array_sum($vals)/count($vals):null;$fin=$avg!==null?round(($r['skor']+$avg)/2):$r['skor'];echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.$r['skor'].'</td><td class="c">'.($avg!==null?round($avg):'-').'</td><td class="c"><b>'.$fin.'</b></td><td class="c">'.predikat($conn,$fin).'</td><td></td><td></td></tr>';}echo '</table>'.sigBlock($examSel,$set);}
-  elseif($t=='rdm'){
-  echo '<div class="no-print" style="background:#fff8c9;border:1px solid #e0c860;border-radius:6px;padding:8px;font-size:12px;margin-bottom:10px">Format mengikuti isian <b>RDM (Rapor Digital Madrasah)</b>: NISN, Nama Siswa, Kelas, Semester, Mata Pelajaran, KKM, Nilai, Predikat, Deskripsi. Klik <a href="?p=csvrdm&exam='.$examSel['id'].'" class="btn green" style="margin:0;padding:4px 10px">⬇ CSV RDM</a> lalu buka/paste hasilnya ke template upload RDM (kolom sudah berurutan & berpemisah tab).</div>';
-  echo rhead($examSel,$set,'LEMBAR SPH UNTUK RDM (RAPOR DIGITAL MADRASAH)');
-  echo '<table><tr><th>No</th><th>NISN</th><th>Nama Siswa</th><th>Kelas</th><th>Semester</th><th>Mata Pelajaran</th><th>KKM</th><th>Nilai</th><th>Predikat</th><th>Deskripsi</th></tr>';
-  foreach($res as $i=>$r){echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.e($r['kelas']).'</td><td class="c">'.e($examSel['smt']).'</td><td>'.e($examSel['mapel']).'</td><td class="c">'.$examSel['kkm'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.predikat($conn,$r['skor']).'</td><td>'.e(deskripsiOf($r,$examSel,$conn)).'</td></tr>';}
-  echo '</table>'.sigBlock($examSel,$set);
- }
- echo '</div>';
- } } } ?>
+elseif($t=='kesimpulan'){
+$maxS=0;$minS=100;$dist=[];$q=$conn->query("SELECT * FROM kkm_range ORDER BY min DESC");while($x=$q->fetch_assoc()){$x['jml']=0;$dist[]=$x;}
+foreach($res as $r){$maxS=max($maxS,$r['skor']);$minS=min($minS,$r['skor']);foreach($dist as &$dd){if($r['skor']>=(int)$dd['min']&&$r['skor']<=(int)$dd['max'])$dd['jml']++;}}unset($dd);
+$soalPerlu=[];for($i=0;$i<$examSel['jumlah_soal'];$i++){$pc=$st['n']?$st['perQ'][$i]/$st['n']*100:0;if($pc<75)$soalPerlu[]=$i+1;}
+$siswaPerlu=[];foreach($res as $i=>$r){if($r['skor']<$examSel['kkm'])$siswaPerlu[]=$i+1;}
+echo kop($set);
+echo '<div class="rhead"><div>PENILAIAN HARIAN TAHUN AJARAN '.e($set['ta']).'</div><div>KESIMPULAN HASIL ANALISIS ('.e($m).')</div></div>';
+echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Jumlah Soal</td><td>: <b>'.$examSel['jumlah_soal'].' butir</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Bentuk Soal</td><td>: <b>'.e($examSel['bentuk']).'</b></td></tr><tr><td>Tahun Pelajaran</td><td>: <b>'.e($set['ta']).'</b></td><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td></tr></table>';
+echo '<div style="display:flex;gap:16px;flex-wrap:wrap"><div style="flex:2;min-width:300px"><table class="info"><tr><td colspan="2"><b>1. Ketuntasan Belajar</b></td></tr><tr><td colspan="2">a. Perorangan</td></tr><tr><td style="padding-left:18px">Jumlah siswa seluruhnya</td><td>: <b>'.$st['n'].' orang</b></td></tr><tr><td style="padding-left:18px">Jumlah siswa yang telah tuntas</td><td>: <b>'.$st['tuntas'].' orang</b></td></tr><tr><td style="padding-left:18px">Jumlah siswa yang belum tuntas</td><td>: <b>'.($st['n']-$st['tuntas']).' orang</b></td></tr><tr><td style="padding-left:18px">Nilai tertinggi</td><td>: <b>'.$maxS.'</b></td></tr><tr><td style="padding-left:18px">Nilai terendah</td><td>: <b>'.$minS.'</b></td></tr><tr><td colspan="2">b. Klasikal</td></tr><tr><td style="padding-left:18px">Persentase siswa yang telah tuntas</td><td>: <b>'.number_format($st['kk'],1).'%</b></td></tr><tr><td style="padding-left:18px">Rata-rata hasil penilaian harian</td><td>: <b>'.number_format($st['rata'],1).'</b></td></tr></table></div>';
+echo '<div style="flex:1;min-width:260px"><table><tr><th>No</th><th>Rentang</th><th>Jumlah</th><th>Keterangan</th></tr>';$no=1;foreach($dist as $dd){echo '<tr><td class="c">'.$no++.'</td><td class="c">'.$dd['min'].' — '.$dd['max'].'</td><td class="c">'.$dd['jml'].'</td><td>'.e(ucfirst($dd['keterangan'])).'</td></tr>';}echo '</table></div></div>';
+echo '<table class="info" style="margin-top:8px"><tr><td colspan="2"><b>2. Kesimpulan</b></td></tr><tr><td style="width:26px">a.</td><td>Perlu perbaikan secara klasikal untuk soal nomor: <b>'.($soalPerlu?implode(', ',$soalPerlu):'-').'</b></td></tr><tr><td>b.</td><td>Perlu perbaikan secara individual untuk siswa bernomor: <b>'.($siswaPerlu?implode(', ',$siswaPerlu):'-').'</b></td></tr></table>';
+echo '<table class="info" style="margin-top:8px"><tr><td colspan="2"><b>Keterangan</b></td></tr><tr><td style="width:26px">A.</td><td>Daya serap perorangan: seorang siswa disebut telah tuntas belajar bila mencapai nilai ≥ KKM ('.$examSel['kkm'].') dengan rumus: Nilai = Jumlah Benar × Skor per Soal.</td></tr><tr><td>B.</td><td>Daya serap klasikal: suatu kelas telah tuntas belajar bila ≥ 75% siswa mencapai daya serap yang dipersyaratkan, dengan rumus: (Siswa Tuntas ÷ Jumlah Siswa) × 100% = '.number_format($st['kk'],1).'%.</td></tr></table>';
+echo sigResmi($examSel,$set);
+}
+elseif($t=='target'){
+$ind=[];$q=$conn->query("SELECT no_soal,indikator FROM indikator WHERE exam_id=".$examSel['id']." ORDER BY no_soal");while($x=$q->fetch_assoc())$ind[(int)$x['no_soal']]=$x['indikator'];
+echo kop($set);
+echo '<div class="rhead"><div>PENILAIAN HARIAN TAHUN AJARAN '.e($set['ta']).'</div><div>PENCAPAIAN TARGET KURIKULUM DAN DAYA SERAP SISWA ('.e($m).')</div></div>';
+echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Jumlah Soal</td><td>: <b>'.$examSel['jumlah_soal'].' butir</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Bentuk Soal</td><td>: <b>'.e($examSel['bentuk']).'</b></td></tr><tr><td>Jumlah Siswa</td><td>: <b>'.$st['n'].' orang</b></td><td>KKM</td><td>: <b>'.$examSel['kkm'].'</b></td></tr></table>';
+echo '<table><tr><th style="width:80px">Nomor Soal</th><th>Materi / Kompetensi Dasar / Indikator</th><th class="c">Target Tuntas</th><th class="c">Belum Tuntas</th><th class="c">Daya Serap</th></tr>';
+for($i=0;$i<$examSel['jumlah_soal'];$i++){$c=$st['perQ'][$i];$pc=$st['n']?round($c/$st['n']*100):0;echo '<tr><td class="c">'.($i+1).'</td><td>'.e($ind[$i+1]??'-').'</td><td class="c">'.$c.' orang</td><td class="c">'.($st['n']-$c).' orang</td><td class="c">'.$pc.'%</td></tr>';}
+echo '</table>';
+echo sigResmi($examSel,$set);
+}
+elseif($t=='remedial'){
+$rem=array_values(array_filter($res,function($r)use($examSel){return $r['skor']<$examSel['kkm'];}));
+$tl=[];$q=$conn->query("SELECT * FROM tindak_lanjut WHERE exam_id=".$examSel['id']);while($x=$q->fetch_assoc())$tl[$x['nisn']]=$x;
+$indText=[];$q=$conn->query("SELECT indikator FROM indikator WHERE exam_id=".$examSel['id']." ORDER BY no_soal");while($x=$q->fetch_assoc()){$v=strtolower(trim($x['indikator']));if($v!==''&&!in_array($v,$indText))$indText[]=$v;}
+$kd=$indText?implode('; ',$indText).'.':'(indikator belum diisi pada lembar koreksi)';
+$BR=['Pemberian bimbingan secara individu','Pemberian bimbingan secara kelompok','Pemberian pembelajaran ulang','Pemanfaatan tutor sebaya'];
+echo '<div class="no-print" style="background:#fff;border:1px solid #2e7d32;border-radius:8px;padding:14px;margin-bottom:14px"><h2>INPUT PROGRAM REMEDIAL — '.e($examSel['mapel']).' '.e($examSel['kelas']).'</h2>';
+echo '<div class="note">Nilai Awal otomatis dari hasil koreksi. Isi <b>Nilai Akhir</b> setelah remedial dan pilih <b>Bentuk Remedial</b>. Keterangan berubah otomatis: <b>Tuntas</b> bila Nilai Akhir ≥ KKM '.$examSel['kkm'].'.</div>';
+echo '<form method="post"><input type="hidden" name="action" value="save_tl"><input type="hidden" name="exam_id" value="'.$examSel['id'].'">';
+echo '<table><tr><th>No</th><th>Nama Siswa</th><th>Nilai Awal</th><th>Nilai Akhir</th><th>Bentuk Remedial</th><th>Keterangan</th></tr>';
+foreach($rem as $i=>$r){$x=$tl[$r['nisn']]??null;$na=$x['nilai_akhir']??null;$ket=$na!==null?(($na>=$examSel['kkm'])?'Tuntas':'Belum Tuntas'):'Belum Tuntas';
+echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td><td class="c">'.$r['skor'].'</td>';
+echo '<td class="c"><input type="number" name="tl['.e($r['nisn']).'][akhir]" value="'.e($na).'" style="width:70px" oninput="ketHitung(this,\'ket_'.e($r['nisn']).'\','.$examSel['kkm'].')"></td>';
+echo '<td><select name="tl['.e($r['nisn']).'][bentuk]"><option value="">-- pilih --</option>';foreach($BR as $b)echo '<option '.(($x['bentuk']??'')===$b?'selected':'').'>'.e($b).'</option>';echo '</select></td>';
+echo '<td class="c" id="ket_'.e($r['nisn']).'">'.$ket.'</td></tr>';}
+if(!$rem)echo '<tr><td colspan="6">Tidak ada peserta remedial 🎉</td></tr>';
+echo '</table><button class="btn green">💾 SIMPAN & PERBARUI LAPORAN</button></form></div>';
+echo '<script>function ketHitung(el,id,kkm){var v=el.value===""?null:+el.value;document.getElementById(id).textContent=(v!==null&&v>=kkm)?"Tuntas":"Belum Tuntas";}</script>';
+echo '<div class="rhead">'.logoImg().'<div>PROGRAM REMEDIAL HASIL PENILAIAN HARIAN BERSAMA</div><div class="pink">'.e($set['sekolah']).'</div><div>TAHUN PELAJARAN '.e($set['ta']).'</div></div>';
+echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Hari/Tanggal</td><td>: <b>'.e($examSel['tanggal']).'</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Guru Mapel</td><td>: <b>'.e($examSel['guru']).'</b></td></tr></table>';
+echo '<table><tr><th rowspan="2">No</th><th rowspan="2">Nama Siswa</th><th rowspan="2">Kompetensi Dasar / Indikator</th><th colspan="'.$examSel['jumlah_soal'].'">Indikator / Nomor Soal yang Belum Tuntas</th><th rowspan="2">KKM</th><th rowspan="2">Bentuk Remedial</th><th colspan="2">Hasil</th><th rowspan="2">Keterangan</th></tr><tr>';
+for($i=1;$i<=$examSel['jumlah_soal'];$i++)echo '<th class="c">'.$i.'</th>';
+echo '<th class="c">Awal</th><th class="c">Akhir</th></tr>';
+if($rem){foreach($rem as $i=>$r){$x=$tl[$r['nisn']]??null;$na=$x['nilai_akhir']??null;$ket=$na!==null?(($na>=$examSel['kkm'])?'Tuntas':'Belum Tuntas'):'Belum Tuntas';
+echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td>';
+if($i===0)echo '<td rowspan="'.count($rem).'">'.e($kd).'</td>';
+$hasDet=strlen((string)$r['detail'])==$examSel['jumlah_soal'];
+for($j=0;$j<$examSel['jumlah_soal'];$j++)echo '<td class="c">'.(($hasDet&&$r['detail'][$j]==='0')?'✗':'').'</td>';
+echo '<td class="c">'.$examSel['kkm'].'</td><td>'.e($x['bentuk']??'').'</td><td class="c">'.$r['skor'].'</td><td class="c">'.($na!==null?$na:'').'</td><td class="c">'.$ket.'</td></tr>';}}
+else echo '<tr><td colspan="'.(8+$examSel['jumlah_soal']).'">Tidak ada peserta remedial 🎉</td></tr>';
+echo '</table>'.sigBlock($examSel,$set);
+}
+elseif($t=='pengayaan'){
+$pg=array_values(array_filter($res,function($r)use($examSel){return $r['skor']>=$examSel['kkm'];}));
+$tl=[];$q=$conn->query("SELECT * FROM tindak_lanjut WHERE exam_id=".$examSel['id']);while($x=$q->fetch_assoc())$tl[$x['nisn']]=$x;
+$indText=[];$q=$conn->query("SELECT indikator FROM indikator WHERE exam_id=".$examSel['id']." ORDER BY no_soal");while($x=$q->fetch_assoc()){$v=strtolower(trim($x['indikator']));if($v!==''&&!in_array($v,$indText))$indText[]=$v;}
+$kd=$indText?implode('; ',$indText).'.':'(indikator belum diisi pada lembar koreksi)';
+$BP=['Belajar Mandiri','Belajar Kelompok','Pengayaan'];
+echo '<div class="no-print" style="background:#fff;border:1px solid #2e7d32;border-radius:8px;padding:14px;margin-bottom:14px"><h2>INPUT PROGRAM PENGAYAAN — '.e($examSel['mapel']).' '.e($examSel['kelas']).'</h2>';
+echo '<div class="note">Nilai Awal otomatis dari hasil koreksi. Isi <b>Nilai Akhir</b> dan pilih <b>Bentuk Pengayaan</b>.</div>';
+echo '<form method="post"><input type="hidden" name="action" value="save_tl"><input type="hidden" name="exam_id" value="'.$examSel['id'].'">';
+echo '<table><tr><th>No</th><th>Nama Siswa</th><th>Nilai Awal</th><th>Nilai Akhir</th><th>Bentuk Pengayaan</th></tr>';
+foreach($pg as $i=>$r){$x=$tl[$r['nisn']]??null;
+echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td><td class="c">'.$r['skor'].'</td>';
+echo '<td class="c"><input type="number" name="tl['.e($r['nisn']).'][akhir]" value="'.e($x['nilai_akhir']??'').'" style="width:70px"></td>';
+echo '<td><select name="tl['.e($r['nisn']).'][bentuk]"><option value="">-- pilih --</option>';foreach($BP as $b)echo '<option '.(($x['bentuk']??'')===$b?'selected':'').'>'.e($b).'</option>';echo '</select></td></tr>';}
+if(!$pg)echo '<tr><td colspan="5">Tidak ada peserta pengayaan.</td></tr>';
+echo '</table><button class="btn green">💾 SIMPAN & PERBARUI LAPORAN</button></form></div>';
+echo '<div class="rhead">'.logoImg().'<div>PROGRAM PENGAYAAN HASIL PENILAIAN HARIAN BERSAMA</div><div class="pink">'.e($set['sekolah']).'</div><div>TAHUN PELAJARAN '.e($set['ta']).'</div></div>';
+echo '<table class="info"><tr><td>Mata Pelajaran</td><td>: <b>'.e($examSel['mapel']).'</b></td><td>Hari/Tanggal</td><td>: <b>'.e($examSel['tanggal']).'</b></td></tr><tr><td>Kelas/Semester</td><td>: <b>'.e($examSel['kelas']).' / '.e($examSel['smt']).'</b></td><td>Guru Mapel</td><td>: <b>'.e($examSel['guru']).'</b></td></tr></table>';
+echo '<table><tr><th>No</th><th>Nama Siswa</th><th>Kompetensi Dasar / Indikator</th><th>KKM</th><th>Nilai Awal</th><th>Nilai Akhir</th><th>Bentuk Pengayaan</th></tr>';
+if($pg){foreach($pg as $i=>$r){$x=$tl[$r['nisn']]??null;
+echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nama']).'</td>';
+if($i===0)echo '<td rowspan="'.count($pg).'">'.e($kd).'</td>';
+echo '<td class="c">'.$examSel['kkm'].'</td><td class="c">'.$r['skor'].'</td><td class="c">'.e($x['nilai_akhir']??'').'</td><td>'.e($x['bentuk']??'').'</td></tr>';}}
+else echo '<tr><td colspan="7">Tidak ada peserta pengayaan.</td></tr>';
+echo '</table>'.sigBlock($examSel,$set);
+}
+elseif($t=='penyerahan'){echo rhead($examSel,$set,'LEMBAR PENYERAHAN NILAI / TANDA TERIMA ('.e($m).')');echo '<table><tr><th>No</th><th>NISN</th><th>Nama</th><th>Nilai PH</th><th>Keterampilan</th><th>Rata-rata</th><th>Predikat</th><th>Tanggal</th><th>Tanda Tangan</th></tr>';foreach($res as $i=>$r){$kt=$conn->query("SELECT * FROM keterampilan WHERE exam_id=".$examSel['id']." AND nisn='".$conn->real_escape_string($r['nisn'])."'")->fetch_assoc();$vals=array_filter([$kt['p1']??null,$kt['p2']??null,$kt['p3']??null,$kt['p4']??null,$kt['p5']??null],function($v){return $v!==null;});$avg=$vals?array_sum($vals)/count($vals):null;$fin=$avg!==null?round(($r['skor']+$avg)/2):$r['skor'];echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.$r['skor'].'</td><td class="c">'.($avg!==null?round($avg):'-').'</td><td class="c"><b>'.$fin.'</b></td><td class="c">'.predikat($conn,$fin).'</td><td></td><td></td></tr>';}echo '</table>'.sigBlock($examSel,$set);}
+elseif($t=='rdm'){
+echo '<div class="no-print" style="background:#fff8c9;border:1px solid #e0c860;border-radius:6px;padding:8px;font-size:12px;margin-bottom:10px">Format mengikuti isian <b>RDM (Rapor Digital Madrasah)</b>: NISN, Nama Siswa, Kelas, Semester, Mata Pelajaran, KKM, Nilai, Predikat, Deskripsi. Klik <a href="?p=csvrdm&exam='.$examSel['id'].'" class="btn green" style="margin:0;padding:4px 10px">⬇ CSV RDM</a> lalu buka/paste hasilnya ke template upload RDM (kolom sudah berurutan & berpemisah tab).</div>';
+echo rhead($examSel,$set,'LEMBAR SPH UNTUK RDM (RAPOR DIGITAL MADRASAH)');
+echo '<table><tr><th>No</th><th>NISN</th><th>Nama Siswa</th><th>Kelas</th><th>Semester</th><th>Mata Pelajaran</th><th>KKM</th><th>Nilai</th><th>Predikat</th><th>Deskripsi</th></tr>';
+foreach($res as $i=>$r){echo '<tr><td class="c">'.($i+1).'</td><td>'.e($r['nisn']).'</td><td>'.e($r['nama']).'</td><td class="c">'.e($r['kelas']).'</td><td class="c">'.e($examSel['smt']).'</td><td>'.e($examSel['mapel']).'</td><td class="c">'.$examSel['kkm'].'</td><td class="c"><b>'.$r['skor'].'</b></td><td class="c">'.predikat($conn,$r['skor']).'</td><td>'.e(deskripsiOf($r,$examSel,$conn)).'</td></tr>';}
+echo '</table>'.sigBlock($examSel,$set);
+}
+echo '</div>';
+} } } ?>
 </main></body></html>
