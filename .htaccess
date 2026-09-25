@@ -1,0 +1,31 @@
+# === KONFIGURASI PHP UNTUK SPH ===
+php_value memory_limit 512M
+php_value max_execution_time 300
+php_value max_input_time 300
+php_value post_max_size 64M
+php_value upload_max_filesize 32M
+php_value max_input_vars 10000
+
+# === ERROR LOGGING (untuk debug) ===
+php_flag display_errors Off
+php_flag log_errors On
+php_value error_log /home/u471136757/public_html/php_errors.log
+
+# === SECURITY ===
+<FilesMatch "\.(sql|log|ini)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# === COMPRESSION ===
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript
+</IfModule>
+
+# === CACHE ===
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+    ExpiresByType image/png "access plus 1 month"
+</IfModule>
